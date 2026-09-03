@@ -1,0 +1,16 @@
+/**
+ * Package-owned invariant registration for research-library tools.
+ * @module @f1star/dsh-research/tool-research-library/invariant
+ */
+import type { Context } from '@deepseek-ai/cordis';
+/** Cordis companion plugin name. */
+export declare const name = "tool-research-library-invariant";
+/** Invariant registry dependency. */
+export declare const inject: string[];
+/**
+ * Register this package's invariant ownership.
+ * @param ctx - Cordis context carrying the invariant registry.
+ * @returns the installed registration's disposer.
+ */
+export declare const apply: (ctx: Context) => Promise<() => void>;
+//# sourceMappingURL=invariant.d.ts.map
