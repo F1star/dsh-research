@@ -1,0 +1,26 @@
+# Install the research services and their model-facing tools for every agent
+# started through this DSH profile. Installing into a profile is therefore the
+# explicit grant; remove this bundle to withdraw the capability.
+- insert:
+    - id: f1star-research-document
+      name: '@f1star/dsh-research/research-document'
+      config:
+        parserProvider: pdfjs
+
+    - id: f1star-research-document-pdfjs
+      name: '@f1star/dsh-research/research-document-pdfjs'
+
+    - id: f1star-research-library
+      name: '@f1star/dsh-research/research-library'
+
+    - id: f1star-research-information
+      name: '@f1star/dsh-research/research-information'
+
+    - id: f1star-tool-research-document
+      name: '@f1star/dsh-research/tool-research-document'
+
+    - id: f1star-tool-research-library
+      name: '@f1star/dsh-research/tool-research-library'
+
+    - id: f1star-tool-research-information
+      name: '@f1star/dsh-research/tool-research-information'
