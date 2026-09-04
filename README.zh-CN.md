@@ -10,9 +10,9 @@
 
 | 能力 | 工具与行为 |
 |---|---|
-| 论文阅读 | `paper_import`、`paper_outline`、`paper_search` 和 `paper_read` 用于导入本地 PDF、浏览结构、进行词法检索，并恢复带物理页索引、解析器版本和引文哈希锚点的精确上下文 block。 |
+| 论文阅读 | `paper_import`、`paper_reading_pack`、`paper_outline`、`paper_search` 和 `paper_read` 用于导入本地 PDF、从可识别的关键章节收集有界原文片段、浏览结构、进行词法检索，并恢复带物理页索引、解析器版本和引文哈希锚点的精确上下文 block。 |
 | 论文库 | `paper_library_register`、`paper_library_list`、`paper_library_get` 和 `paper_library_alias` 在 profile storage 中保留论文身份、书目信息 provenance、精确来源版本、解析器 observation 和可撤销 alias。 |
-| 科研信息整合 | 科研问题、证据、笔记、claim、entity、observation、comparison protocol、synthesis、matrix 和 audit 操作可构建跨论文可追溯记录，同时避免把作者解释表述成来源原文。 |
+| 科研信息整合 | 科研问题、证据、笔记、claim、entity、observation、comparison protocol、synthesis、matrix、audit 和 `research_review_render` 操作可构建跨论文可追溯记录，并将明确选定的 active synthesis 渲染成可继续编辑的 Markdown，同时避免把作者解释表述成来源原文。 |
 
 这个独立 bundle 会在所选 profile 中同时挂载科研服务和面向模型的工具 Consumer。安装该 bundle 会明确向通过这个 profile 启动的每个 agent 授权：每个 agent 都可以看到科研工具 schema 及其稳定的 prompt 指导。
 
@@ -45,21 +45,23 @@ dsh plugin --profile web add github:F1star/dsh-research#<tag-or-commit>
 
 ## 推荐工作流
 
-1. 使用 `paper_import` 导入 PDF，通过 `paper_outline` 查看标题结构，以 `paper_search` 定位相关 block，并在依赖某段内容前调用 `paper_read` 阅读其上下文。
+1. 使用 `paper_import` 导入 PDF，以 `paper_reading_pack` 对可识别的关键章节进行有界初读，通过 `paper_outline` 查看标题结构，以 `paper_search` 补充定位相关 block，并在依赖某段内容前调用 `paper_read` 阅读其上下文。
 2. 使用 `paper_library_register` 注册当前保留的文档。将返回的论文、来源版本、文档、block、解析器版本、物理页索引和引文哈希标识随笔记一同保留。
 3. 创建科研问题，捕获精确证据，并记录阅读笔记或段落问题。将来源陈述与明确的推断分别记录。
 4. 比较数值结果时，分别归一化每篇论文的方法、数据集、指标、数值、单位、数据划分、不确定性、评估协议和条件。只有保留字段兼容时，才记录明确的比较协议。
-5. 使用 matrix 和 audit view 查找缺失或过期的支持，再撰写引用有效来源 claim 的结构化 synthesis finding。
+5. 使用 matrix 和 audit view 查找缺失或过期的支持，再撰写引用有效来源 claim 的结构化 synthesis finding。将明确的 active synthesis id 传给 `research_review_render`，得到带证据清单和书目清单的分页 Markdown。
 
 你可以用自然语言描述任务，由 agent 选择工具。例如：
 
 ```text
-导入 papers/one.pdf，显示论文结构并查找讨论评估数据集的段落。请先阅读相关 block 的上下文再总结。注册这篇论文，创建一个关于数据集影响的科研问题，为每条来源陈述捕获精确证据，并在综合结论前展示 audit view。
+导入 papers/one.pdf，并为摘要、引言、方法、结果、局限和结论构建 reading pack。对导读包遗漏的内容使用 outline 和 search 工具补充查找，并在依赖相关内容前阅读周围 block。注册这篇论文，创建一个关于数据集影响的科研问题，为每条来源陈述捕获精确证据，展示 audit view，撰写 synthesis，再把该 synthesis 渲染成研究综述草稿。
 ```
+
+`paper_reading_pack` 识别一组封闭的中英文章节标签，并在配置的文本预算内返回保留独立锚点的来源 block，同时通过 `text_truncated` 明确标记截断；它不会总结这些 block，`missing_roles` 只表示解析器没有识别出匹配标签。`research_review_render` 同样不会撰写新 finding：它只渲染一个明确选定的 active synthesis，并标注来源摘要、推断、证据关系、当前复核状态和不完整的书目信息。精确 selection 文本必须通过 `include_selected_quotes` 显式开启；续页必须复用第一页的 `render_digest`，从而避免把已变化的记录静默拼接到旧页面。`ready-with-warnings` 结果在发布前仍需人工检查。
 
 ## 配置
 
-bundle 的默认配置位于 [`cordis.patch.yml`](cordis.patch.yml)。profile 自己的 `cordis.patch.yml` 会在其后应用，并可按 `id` 覆盖行。覆盖行时会替换完整的 `config` 值，而不是合并单个键，因此覆盖 `f1star-research-document` 时应保留 `parserProvider: pdfjs`，除非有意选择另一个已注册解析器。
+bundle 行位于 [`cordis.patch.yml`](cordis.patch.yml)，各插件的默认值由其配置 schema 提供。profile 自己的 `cordis.patch.yml` 会在其后应用，并可按 `id` 覆盖行。覆盖行时会替换完整的 `config` 值，而不是合并单个键，因此覆盖 `f1star-research-document` 时应保留 `parserProvider: pdfjs`，除非有意选择另一个已注册解析器。`f1star-tool-research-document` 的 reading-pack 默认每节返回 12 个 block、每节最多 14 个 block、一次最多请求 7 节；`defaultReadingPackBlocksPerSection` 不得超过 `maxReadingPackBlocksPerSection`，且 `maxOutputTextChars` 不得小于 `maxReadingPackSections × maxReadingPackBlocksPerSection`。该文本预算只覆盖可变来源字段；固定的 provenance 锚点与提示是额外的有界输出。`f1star-tool-research-information.maxReviewTextChars` 默认最多允许完整 review 使用 2,000,000 个 UTF-16 code unit，并会在分页前超限时明确失败。
 
 自定义 profile 应按以下顺序组合 bundle：
 
@@ -75,8 +77,10 @@ bundle 的默认配置位于 [`cordis.patch.yml`](cordis.patch.yml)。profile �
 - 已解析 PDF 页面只存在于当前进程。重启后，必须重新导入 PDF 才能继续读取 block 或捕获新证据。论文库记录身份和 observation，不保存来源 PDF 字节。
 - 证据记录保留精确 block 文本和 provenance，但重建历史 PDF 仍需要你自行持久保存来源文件。
 - PDF.js 只提取原生文本。扫描版或纯图片文档需要在本 bundle 之外进行 OCR；本次导入不能支持文本 claim。
+- Reading pack 的识别依赖提取出的章节标签和近似阅读顺序。角色未匹配不表示论文缺少相应主题。
 - 检索与论文库匹配均为词法操作。本 bundle 不提供语义检索、远程 DOI 或 arXiv 验证、自动 claim 聚类或自动 entity resolution。
-- 数值 observation 和 comparison protocol 是作者给出的归一化。本 bundle 不会暗中转换单位或 alias，也不会对结果排序、计算差值、推断统计显著性、执行 meta-analysis、生成完整文献综述或导出引用。
+- 数值 observation 和 comparison protocol 是作者给出的归一化。本 bundle 不会暗中转换单位或 alias，也不会对结果排序、计算差值、推断统计显著性或执行 meta-analysis。
+- Review render 是对已保留记录的确定性 Markdown 投影，不是自动生成完整文献综述，也不是正式的 CSL/BibTeX 引用导出器。它始终输出精确 selection 哈希与偏移，仅在显式请求时披露选中文本，否则输出 locator 而不重复完整证据 block。
 
 ## 更新或移除
 

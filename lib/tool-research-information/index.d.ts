@@ -20,6 +20,8 @@ export declare const DEFAULT_MAX_REFERENCES_PER_RESULT = 512;
 export declare const DEFAULT_MAX_OUTPUT_TEXT_CHARS = 100000;
 /** Default maximum normalized query length accepted by list and named-field retrieval. */
 export declare const DEFAULT_MAX_QUERY_CHARS = 500;
+/** Default maximum UTF-16 code units in one complete review before paging. */
+export declare const DEFAULT_MAX_REVIEW_TEXT_CHARS = 2000000;
 /** Structured research-information tool projection and query policy. */
 export interface Config {
     /** Maximum questions returned by one list call. Defaults to 50. */
@@ -32,9 +34,11 @@ export interface Config {
     readonly maxOutputTextChars?: number;
     /** Maximum normalized list and named-field query characters. Defaults to 500. */
     readonly maxQueryChars?: number;
+    /** Maximum UTF-16 code units in one complete deterministic review. Defaults to 2000000. */
+    readonly maxReviewTextChars?: number;
 }
 /** Loader schema for research-information tool limits. */
 export declare const Config: z<Config>;
-/** Register stable guidance and ten structured research-information tools. */
+/** Register stable guidance and eleven structured research-information tools. */
 export declare function apply(ctx: Context, config?: Config): void;
 //# sourceMappingURL=index.d.ts.map

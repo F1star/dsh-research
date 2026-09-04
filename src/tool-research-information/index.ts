@@ -64,6 +64,11 @@ import type {
   ToolRunContext,
   ValueSchemaSpec,
 } from '@deepseek-ai/dsh-tools'
+import {
+  RESEARCH_REVIEW_WARNING_CODES,
+  renderResearchReview,
+  type ResearchReviewWarning,
+} from './review-render.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-research-information'
@@ -87,6 +92,8 @@ export const DEFAULT_MAX_REFERENCES_PER_RESULT = 512
 export const DEFAULT_MAX_OUTPUT_TEXT_CHARS = 100_000
 /** Default maximum normalized query length accepted by list and named-field retrieval. */
 export const DEFAULT_MAX_QUERY_CHARS = 500
+/** Default maximum UTF-16 code units in one complete review before paging. */
+export const DEFAULT_MAX_REVIEW_TEXT_CHARS = 2_000_000
 
 /** Structured research-information tool projection and query policy. */
 export interface Config {
@@ -100,6 +107,8 @@ export interface Config {
   readonly maxOutputTextChars?: number
   /** Maximum normalized list and named-field query characters. Defaults to 500. */
   readonly maxQueryChars?: number
+  /** Maximum UTF-16 code units in one complete deterministic review. Defaults to 2000000. */
+  readonly maxReviewTextChars?: number
 }
 
 /** Loader schema for research-information tool limits. */
@@ -109,6 +118,7 @@ export const Config: z<Config> = z.object({
   maxReferencesPerResult: z.number().step(1).min(1).default(DEFAULT_MAX_REFERENCES_PER_RESULT),
   maxOutputTextChars: z.number().step(1).min(256).default(DEFAULT_MAX_OUTPUT_TEXT_CHARS),
   maxQueryChars: z.number().step(1).min(1).default(DEFAULT_MAX_QUERY_CHARS),
+  maxReviewTextChars: z.number().step(1).min(256).default(DEFAULT_MAX_REVIEW_TEXT_CHARS),
 })
 
 interface ResolvedConfig {
@@ -117,6 +127,7 @@ interface ResolvedConfig {
   readonly maxReferencesPerResult: number
   readonly maxOutputTextChars: number
   readonly maxQueryChars: number
+  readonly maxReviewTextChars: number
 }
 
 type RuntimeEvidenceCoverage =
@@ -898,10 +909,44 @@ const GET_OUTPUT_SCHEMA = {
   },
 } as const
 
+const REVIEW_WARNING_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    code: { type: 'string', required: true, enum: [...RESEARCH_REVIEW_WARNING_CODES] },
+    message: { type: 'string', required: true },
+    finding_id: { type: 'string' },
+    claim_id: { type: 'string' },
+    evidence_id: { type: 'string' },
+    paper_id: { type: 'string' },
+  },
+} as const
+
+const REVIEW_RENDER_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: { type: 'string', required: true, enum: ['ready', 'ready-with-warnings', 'not-ready'] },
+    question_id: { type: 'string', required: true },
+    synthesis_id: { type: 'string', required: true },
+    warnings: { type: 'array', required: true, items: REVIEW_WARNING_SCHEMA },
+    total_warnings: { type: 'integer', required: true },
+    warnings_omitted: { type: 'boolean', required: true },
+    markdown: { type: 'string', required: true },
+    render_digest: { type: 'string', required: true },
+    text_offset: { type: 'integer', required: true },
+    returned_text_chars: { type: 'integer', required: true },
+    total_text_chars: { type: 'integer', required: true },
+    next_text_offset: { type: 'integer' },
+    truncated: { type: 'boolean', required: true },
+  },
+} as const
+
 type QuestionSummary = InferValue<typeof QUESTION_SUMMARY_SCHEMA>
 type MutationOutput = InferValue<typeof MUTATION_OUTPUT_SCHEMA>
 type ListOutput = InferValue<typeof LIST_OUTPUT_SCHEMA>
 type GetOutput = InferValue<typeof GET_OUTPUT_SCHEMA>
+type ReviewRenderOutput = InferValue<typeof REVIEW_RENDER_OUTPUT_SCHEMA>
 type ProjectedEvidence = InferValue<typeof EVIDENCE_SCHEMA>
 type ProjectedNote = InferValue<typeof NOTE_SCHEMA>
 type ProjectedClaim = InferValue<typeof CLAIM_SCHEMA>
@@ -1045,13 +1090,13 @@ interface ObservationProjectionState {
   >
 }
 
-/** Register stable guidance and ten structured research-information tools. */
+/** Register stable guidance and eleven structured research-information tools. */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)
   ctx.systemPrompt.section({
     name: 'tool:research-information',
     order: 114,
-    text: 'Create a research question before capturing evidence. Use paper_import, paper_library_register, and paper_read before research_evidence_capture; pass only document_id, block_id, and an optional exact quote because paper identity, parser provenance, page location, and hashes are derived from the retained runtime document. After capture, use research_note_write for authored notes or passage questions anchored to that evidence. A reading note is authored commentary, not a source statement; write a separate research_claim_write claim before using the material in a matrix, normalized entity, observation, comparison protocol, or synthesis. Record source statements separately from agent inferences, and never present an uncited inference as a source claim. Use research_entity_write to normalize active evidence-backed source statements whose facet matches method, dataset, or metric. An entity canonical name is authored normalization, not source text. Grouping claims under one entity records concept coreference only; it does not mean a paper adopts or endorses the entity, and it does not mean the claims agree. Use research_observation_write only for one paper-local result whose result, method, dataset, metric, split, evaluation-protocol, and condition references are explicitly recorded. Observation values, units, statistics, uncertainty, roles, and context are authored normalization, not quotations. A not-recorded unit, split, protocol, condition set, or uncertainty means the harness has not retained that fact; it never means zero, absent, or not reported by the paper. Use not-applicable only as a positive authored assertion: for unit it means dimensionless, and for split, evaluation protocol, conditions, or uncertainty it means the concept genuinely does not apply. The observations view lists raw observations in insertion order and may expose exact structural-alignment candidates, but a candidate is not a compatibility decision. Never convert units or aliases, average, calculate a delta, rank results, or infer statistical significance from raw observations or candidates. Only an active, non-stale research_comparison_protocol_write record explicitly authorizes describing its selected observations as compatible under its authored rationale; even then, statistical significance remains unassessed. Use research_question_get with view=notes to review notes in reading order, view=entities to retrieve normalized cross-paper groups, view=observations for raw normalized measurements, view=comparisons for explicit compatibility decisions, view=matrix to compare facets across papers, and view=audit to expose missing coverage, stale references, reimport requirements, unnormalized source claims, and uncited inference. Source-summary synthesis findings must cite active evidence-backed source-statement claims; a missing matrix cell means no captured source statement, not contrary evidence. Item and reference paging is deterministic: when a get result omits items or references, continue with the applicable offset, finding_offset, or reference_offset while preserving the same view and filters. Only note text and a selected observation decimal have continuation cursors. To follow next_text_offset, repeat the same question_id, view=notes, evidence_id filter, and item offset with max_items=1. To recover an exact decimal whose projection is truncated, repeat the exact observation filter, max_items=1, decimal_field, and next_decimal_text_offset. Other truncated text, including entity canonical names, observation context, and comparison rationale, has no text cursor.',
+    text: 'Create a research question before capturing evidence. Use paper_import, paper_library_register, and paper_read before research_evidence_capture; pass only document_id, block_id, and an optional exact quote because paper identity, parser provenance, page location, and hashes are derived from the retained runtime document. After capture, use research_note_write for authored notes or passage questions anchored to that evidence. A reading note is authored commentary, not a source statement; write a separate research_claim_write claim before using the material in a matrix, normalized entity, observation, comparison protocol, or synthesis. Record source statements separately from agent inferences, and never present an uncited inference as a source claim. Use research_entity_write to normalize active evidence-backed source statements whose facet matches method, dataset, or metric. An entity canonical name is authored normalization, not source text. Grouping claims under one entity records concept coreference only; it does not mean a paper adopts or endorses the entity, and it does not mean the claims agree. Use research_observation_write only for one paper-local result whose result, method, dataset, metric, split, evaluation-protocol, and condition references are explicitly recorded. Observation values, units, statistics, uncertainty, roles, and context are authored normalization, not quotations. A not-recorded unit, split, protocol, condition set, or uncertainty means the harness has not retained that fact; it never means zero, absent, or not reported by the paper. Use not-applicable only as a positive authored assertion: for unit it means dimensionless, and for split, evaluation protocol, conditions, or uncertainty it means the concept genuinely does not apply. The observations view lists raw observations in insertion order and may expose exact structural-alignment candidates, but a candidate is not a compatibility decision. Never convert units or aliases, average, calculate a delta, rank results, or infer statistical significance from raw observations or candidates. Only an active, non-stale research_comparison_protocol_write record explicitly authorizes describing its selected observations as compatible under its authored rationale; even then, statistical significance remains unassessed. Use research_question_get with view=notes to review notes in reading order, view=entities to retrieve normalized cross-paper groups, view=observations for raw normalized measurements, view=comparisons for explicit compatibility decisions, view=matrix to compare facets across papers, and view=audit to expose missing coverage, stale references, reimport requirements, unnormalized source claims, and uncited inference. Source-summary synthesis findings must cite active evidence-backed source-statement claims; a missing matrix cell means no captured source statement, not contrary evidence. Use research_review_render only with an explicit active synthesis id after checking the audit view. It deterministically renders stored findings, claims, evidence relations, exact anchors, and bibliography metadata as Markdown; it never writes state or generates new research prose. Selected quote text is omitted unless include_selected_quotes=true. Treat ready-with-warnings as requiring review before publication. Item and reference paging is deterministic: when a get result omits items or references, continue with the applicable offset, finding_offset, or reference_offset while preserving the same view and filters. Note text, selected observation decimals, and rendered review Markdown have continuation cursors. To follow a note next_text_offset, repeat the same question_id, view=notes, evidence_id filter, and item offset with max_items=1. To recover an exact decimal whose projection is truncated, repeat the exact observation filter, max_items=1, decimal_field, and next_decimal_text_offset. To follow a review next_text_offset, repeat the same question_id, synthesis_id, include_selected_quotes value, and render_digest. Other truncated text, including entity canonical names, observation context, and comparison rationale, has no text cursor.',
   })
 
   ctx.tools.register(defineTool({
@@ -1496,6 +1541,88 @@ export function apply(ctx: Context, config: Config = {}): void {
       return {
         card: 'generic',
         title: `Read research ${view} ${shortId(args.question_id)}`,
+        kind: 'read',
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'research_review_render',
+    description: 'Deterministically render one explicit active synthesis as digest-bound paged Markdown with claim labels, evidence relations, exact source anchors, opt-in selected text, bibliography metadata, and readiness warnings. It does not generate prose or write research state.',
+    parameters: {
+      question_id: { type: 'string', required: true, description: 'Stable research-question UUID.' },
+      synthesis_id: { type: 'string', required: true, description: 'Explicit active synthesis UUID to render.' },
+      include_selected_quotes: { type: 'boolean', description: 'Disclose exact retained selection text. Defaults to false; anchors and selection hashes remain available either way.' },
+      text_offset: { type: 'integer', description: 'Zero-based Unicode-code-point offset in the rendered Markdown. Defaults to 0.' },
+      render_digest: { type: 'string', description: 'Required with a nonzero text_offset; exact digest returned by the first page.' },
+    },
+    output: outputDefinition(
+      'Research review render',
+      'dsh/research-review-render',
+      REVIEW_RENDER_OUTPUT_SCHEMA,
+      resolved,
+      value => formatReviewRender(value as ReviewRenderOutput),
+    ),
+    isConcurrencySafe: () => true,
+    execute(args): Promise<ReviewRenderOutput> {
+      const questionId = parseQuestionId(args.question_id)
+      const synthesisId = parseSynthesisId(args.synthesis_id)
+      const textOffset = nonNegativeSafeInteger('text_offset', args.text_offset ?? 0)
+      const includeSelectedQuotes = args.include_selected_quotes ?? false
+      const rendered = renderResearchReview(
+        ctx.researchInformation.get(questionId),
+        synthesisId,
+        {
+          paper: paperId => ctx.researchLibrary.get(paperId),
+          evidenceCoverage: evidence => evidenceCoverage(ctx, evidence),
+        },
+        {
+          includeSelectedQuotes,
+          maxCharacters: resolved.maxReviewTextChars,
+          maxWarnings: resolved.maxReferencesPerResult,
+        },
+      )
+      const markdown = rendered.markdown ?? ''
+      const renderDigest = `sha256:${hashText(markdown)}`
+      const expectedDigest = args.render_digest === undefined
+        ? undefined
+        : parseRenderDigest(args.render_digest)
+      if (textOffset > 0 && expectedDigest === undefined) {
+        throw new Error('render_digest is required when text_offset is greater than zero')
+      }
+      if (expectedDigest !== undefined && expectedDigest !== renderDigest) {
+        throw new Error('render changed since the previous page; restart with text_offset=0')
+      }
+      const capacity = rendered.status === 'not-ready'
+        ? resolved.maxOutputTextChars
+        : reviewTextRenderCapacity(
+          markdown,
+          textOffset,
+          resolved.maxOutputTextChars,
+          rendered.status,
+          renderDigest,
+        )
+      const page = pageText(markdown, textOffset, capacity)
+      const projectedWarnings = textOffset === 0
+        ? rendered.warnings.map(projectReviewWarning)
+        : []
+      return Promise.resolve({
+        status: rendered.status,
+        question_id: questionId,
+        synthesis_id: synthesisId,
+        warnings: projectedWarnings,
+        total_warnings: rendered.warnings.length,
+        warnings_omitted: textOffset > 0 && rendered.warnings.length > 0,
+        markdown: page.value,
+        render_digest: renderDigest,
+        ...projectTextPage(page),
+        truncated: page.truncated,
+      })
+    },
+    presentCall(args): GenericCallView {
+      return {
+        card: 'generic',
+        title: `Render research review ${shortId(args.synthesis_id)}`,
         kind: 'read',
       }
     },
@@ -3825,22 +3952,42 @@ function pageItems<T>(values: readonly T[], offset: number, maximum: number): It
 }
 
 function pageText(value: string, offset: number, maximumCodeUnits: number): TextPage {
-  const characters = Array.from(value)
-  const start = Math.min(offset, characters.length)
-  let end = start
+  let codePointIndex = 0
+  let startCodeUnit = value.length
+  let endCodeUnit = value.length
+  let returned = 0
   let retainedCodeUnits = 0
-  for (const character of characters.slice(start)) {
-    if (retainedCodeUnits + character.length > maximumCodeUnits) break
-    retainedCodeUnits += character.length
-    end++
+  let accepting = true
+  for (let codeUnitIndex = 0; codeUnitIndex < value.length;) {
+    const codePoint = value.codePointAt(codeUnitIndex)
+    /* v8 ignore next 3 -- the loop index is always inside the string. */
+    if (codePoint === undefined) throw new Error('tool-research-information: invalid text paging index')
+    const width = codePoint > 0xFFFF ? 2 : 1
+    if (codePointIndex === offset) {
+      startCodeUnit = codeUnitIndex
+      endCodeUnit = codeUnitIndex
+    }
+    if (codePointIndex >= offset && accepting) {
+      if (retainedCodeUnits + width <= maximumCodeUnits) {
+        retainedCodeUnits += width
+        returned++
+        endCodeUnit = codeUnitIndex + width
+      } else {
+        accepting = false
+      }
+    }
+    codePointIndex++
+    codeUnitIndex += width
   }
+  const start = Math.min(offset, codePointIndex)
+  const end = start + returned
   return {
-    value: characters.slice(start, end).join(''),
+    value: value.slice(startCodeUnit, endCodeUnit),
     offset,
-    returned: end - start,
-    total: characters.length,
-    ...(end < characters.length ? { nextOffset: end } : {}),
-    truncated: start > 0 || end < characters.length,
+    returned,
+    total: codePointIndex,
+    ...(end < codePointIndex ? { nextOffset: end } : {}),
+    truncated: start > 0 || end < codePointIndex,
   }
 }
 
@@ -3917,6 +4064,75 @@ function projectTextPage(page: TextPage): {
     total_text_chars: page.total,
     ...(page.nextOffset === undefined ? {} : { next_text_offset: page.nextOffset }),
   }
+}
+
+function projectReviewWarning(value: ResearchReviewWarning): {
+  readonly code: ResearchReviewWarning['code']
+  readonly message: string
+  readonly finding_id?: string
+  readonly claim_id?: string
+  readonly evidence_id?: string
+  readonly paper_id?: string
+} {
+  return {
+    code: value.code,
+    message: value.message,
+    ...(value.findingId === undefined ? {} : { finding_id: value.findingId }),
+    ...(value.claimId === undefined ? {} : { claim_id: value.claimId }),
+    ...(value.evidenceId === undefined ? {} : { evidence_id: value.evidenceId }),
+    ...(value.paperId === undefined ? {} : { paper_id: value.paperId }),
+  }
+}
+
+function reviewTextRenderCapacity(
+  markdown: string,
+  offset: number,
+  maximum: number,
+  status: 'ready' | 'ready-with-warnings',
+  renderDigest: string,
+): number {
+  let capacity = maximum
+  for (;;) {
+    const page = pageText(markdown, offset, capacity)
+    if (page.nextOffset === offset) {
+      throw new Error('tool-research-information: review Markdown cannot advance within maxOutputTextChars')
+    }
+    const overflow = formatReviewPage(page, status, renderDigest).length - maximum
+    if (overflow <= 0) return capacity
+    /* v8 ignore next 3 -- the configured minimum leaves room for paging metadata. */
+    if (capacity === 0) {
+      throw new Error('tool-research-information: review paging metadata exceeds maxOutputTextChars')
+    }
+    capacity = Math.max(0, capacity - overflow)
+  }
+}
+
+function formatReviewRender(value: ReviewRenderOutput): string {
+  if (value.status === 'not-ready') {
+    const lines = ['Research review is not ready.']
+    for (const warning of value.warnings) lines.push(`- ${warning.code}: ${warning.message}`)
+    return lines.join('\n')
+  }
+  return formatReviewPage({
+    value: value.markdown,
+    offset: value.text_offset,
+    returned: value.returned_text_chars,
+    total: value.total_text_chars,
+    ...(value.next_text_offset === undefined ? {} : { nextOffset: value.next_text_offset }),
+    truncated: value.truncated,
+  }, value.status, value.render_digest)
+}
+
+function formatReviewPage(
+  page: TextPage,
+  status: 'ready' | 'ready-with-warnings',
+  renderDigest: string,
+): string {
+  const end = page.offset + page.returned
+  const continuation = page.nextOffset === undefined
+    ? 'next_text_offset=none'
+    : `next_text_offset=${page.nextOffset}`
+  return `${page.value}\n---\nstatus=${status} chars=${page.offset}-${end}/${page.total} ${continuation} render_digest=${renderDigest}`
 }
 
 class ProjectionBudget {
@@ -4270,9 +4486,15 @@ function resolveConfig(config: Config = {}): ResolvedConfig {
       'maxOutputTextChars', config.maxOutputTextChars ?? DEFAULT_MAX_OUTPUT_TEXT_CHARS,
     ),
     maxQueryChars: positiveSafeInteger('maxQueryChars', config.maxQueryChars ?? DEFAULT_MAX_QUERY_CHARS),
+    maxReviewTextChars: positiveSafeInteger(
+      'maxReviewTextChars', config.maxReviewTextChars ?? DEFAULT_MAX_REVIEW_TEXT_CHARS,
+    ),
   }
   if (resolved.maxOutputTextChars < 256) {
     throw new TypeError('tool-research-information: maxOutputTextChars must be at least 256')
+  }
+  if (resolved.maxReviewTextChars < 256) {
+    throw new TypeError('tool-research-information: maxReviewTextChars must be at least 256')
   }
   return resolved
 }
@@ -4361,6 +4583,13 @@ function shortId(value: string): string {
 
 function hashText(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+function parseRenderDigest(value: string): string {
+  if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
+    throw new Error('render_digest must be a sha256 digest returned by research_review_render')
+  }
+  return value
 }
 
 /* v8 ignore next 3 -- only exhaustive closed-union defaults call this defensive assertion. */

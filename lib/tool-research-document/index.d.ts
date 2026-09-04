@@ -25,6 +25,12 @@ export declare const DEFAULT_IMPORT_TIMEOUT_MS = 120000;
 export declare const DEFAULT_READ_BEFORE = 1;
 /** Default following context for `paper_read`. */
 export declare const DEFAULT_READ_AFTER = 2;
+/** Default blocks returned for each semantic section in `paper_reading_pack`. */
+export declare const DEFAULT_READING_PACK_BLOCKS_PER_SECTION = 12;
+/** Maximum blocks selectable for each semantic section in `paper_reading_pack`. */
+export declare const DEFAULT_MAX_READING_PACK_BLOCKS_PER_SECTION = 14;
+/** Maximum semantic sections selectable in one `paper_reading_pack` call. */
+export declare const DEFAULT_MAX_READING_PACK_SECTIONS = 7;
 /** Paper tool resource and output policy. */
 export interface Config {
     /** Inclusive complete-PDF byte cap. Defaults to 50 MiB. */
@@ -43,9 +49,15 @@ export interface Config {
     readonly defaultReadBefore?: number;
     /** Default number of following blocks for `paper_read`. Defaults to 2. */
     readonly defaultReadAfter?: number;
+    /** Default blocks per semantic section in `paper_reading_pack`. Defaults to 12. */
+    readonly defaultReadingPackBlocksPerSection?: number;
+    /** Maximum blocks per semantic section in `paper_reading_pack`. Defaults to 14. */
+    readonly maxReadingPackBlocksPerSection?: number;
+    /** Maximum semantic sections in `paper_reading_pack`. Defaults to 7. */
+    readonly maxReadingPackSections?: number;
 }
 /** Loader schema for paper tool limits. */
 export declare const Config: z<Config>;
-/** Register paper-reading prompt guidance and four tools. */
+/** Register paper-reading prompt guidance and five tools. */
 export declare function apply(ctx: Context, config: Config): void;
 //# sourceMappingURL=index.d.ts.map

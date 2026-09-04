@@ -8,14 +8,20 @@
 | `research-document-pdfjs` | PDF.js native-text parser registered as provider `pdfjs`. |
 | `research-library` | Durable paper identity, bibliography provenance, source versions, parser observations, and aliases. |
 | `research-information` | Durable questions, evidence, notes, claims, entities, observations, comparison protocols, and syntheses. |
-| `tool-research-document` | Model-facing paper import and passage-navigation tools. |
+| `tool-research-document` | Model-facing paper import, semantic reading-pack, and exact passage-navigation tools. |
 | `tool-research-library` | Model-facing paper-library tools. |
-| `tool-research-information` | Model-facing evidence capture, structured integration, matrix, and audit tools. |
+| `tool-research-information` | Model-facing evidence capture, structured integration, matrix, audit, and deterministic review-rendering tools. |
 
 The profile bundle patch mounts the four services first and then the three tool consumers. Service injection still controls activation; list order makes the intended ownership visible in the composed configuration.
 
 Installing the bundle into a profile is an explicit profile-wide tool grant. The consumers register into that profile's global tool layer, so every agent preset started through the profile inherits the research tools. Removing the bundle withdraws both the services and those registrations on the next profile start.
 
 Parsed PDF blocks are process-local because the parser service is a bounded runtime cache. Durable storage contains paper identities, source observations, evidence text and anchors, and authored research records, but not the PDF bytes. This separation prevents a durable record from being mistaken for a retrievable source file.
+
+`paper_reading_pack` is a read-only projection over retained document blocks. It recognizes a closed set of English and Chinese semantic section labels, selects bounded source blocks without combining their text, and preserves every block locator and quote hash. The result is navigation material, not a summary; an unmatched role reports parser recognition failure rather than source-level absence.
+
+`research_review_render` is a read-only projection over one explicit active synthesis and the claims, evidence, and paper records it references. The renderer preserves finding kind, stance, claim kind, and every evidence relation; exact selected text requires an explicit disclosure flag, while omitted selections and unselected full blocks retain exact hashes and locators. Current runtime coverage and incomplete bibliography fields become readiness warnings. Continuation pages are bound to a digest of the complete projection, and a configurable complete-render limit fails closed before paging. The rendered Markdown is not persisted and contains no generated findings.
+
+Both projections reuse the version 1 paper-library records and version 4 research-information records shipped in 0.1.0. They add no durable fields, events, or storage migration.
 
 Internal imports between the seven entries use relative ESM paths. Official `@deepseek-ai/*` packages remain peer dependencies so the plugin resolves the DSH installation's single Cordis and service-definition instances. The package commits prebuilt `lib/` artifacts and declares no install-time lifecycle script.

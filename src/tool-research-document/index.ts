@@ -43,6 +43,24 @@ export const DEFAULT_IMPORT_TIMEOUT_MS = 120_000
 export const DEFAULT_READ_BEFORE = 1
 /** Default following context for `paper_read`. */
 export const DEFAULT_READ_AFTER = 2
+/** Default blocks returned for each semantic section in `paper_reading_pack`. */
+export const DEFAULT_READING_PACK_BLOCKS_PER_SECTION = 12
+/** Maximum blocks selectable for each semantic section in `paper_reading_pack`. */
+export const DEFAULT_MAX_READING_PACK_BLOCKS_PER_SECTION = 14
+/** Maximum semantic sections selectable in one `paper_reading_pack` call. */
+export const DEFAULT_MAX_READING_PACK_SECTIONS = 7
+
+const READING_ROLES = [
+  'abstract',
+  'introduction',
+  'related-work',
+  'method',
+  'results',
+  'limitations',
+  'conclusion',
+] as const
+
+type ReadingRole = typeof READING_ROLES[number]
 
 /** Paper tool resource and output policy. */
 export interface Config {
@@ -62,6 +80,12 @@ export interface Config {
   readonly defaultReadBefore?: number
   /** Default number of following blocks for `paper_read`. Defaults to 2. */
   readonly defaultReadAfter?: number
+  /** Default blocks per semantic section in `paper_reading_pack`. Defaults to 12. */
+  readonly defaultReadingPackBlocksPerSection?: number
+  /** Maximum blocks per semantic section in `paper_reading_pack`. Defaults to 14. */
+  readonly maxReadingPackBlocksPerSection?: number
+  /** Maximum semantic sections in `paper_reading_pack`. Defaults to 7. */
+  readonly maxReadingPackSections?: number
 }
 
 /** Loader schema for paper tool limits. */
@@ -74,6 +98,9 @@ export const Config: z<Config> = z.object({
   importTimeoutMs: z.number().step(1).min(1).default(DEFAULT_IMPORT_TIMEOUT_MS),
   defaultReadBefore: z.number().step(1).min(0).default(DEFAULT_READ_BEFORE),
   defaultReadAfter: z.number().step(1).min(0).default(DEFAULT_READ_AFTER),
+  defaultReadingPackBlocksPerSection: z.number().step(1).min(1).default(DEFAULT_READING_PACK_BLOCKS_PER_SECTION),
+  maxReadingPackBlocksPerSection: z.number().step(1).min(1).default(DEFAULT_MAX_READING_PACK_BLOCKS_PER_SECTION),
+  maxReadingPackSections: z.number().step(1).min(1).max(READING_ROLES.length).default(DEFAULT_MAX_READING_PACK_SECTIONS),
 })
 
 interface ResolvedConfig {
@@ -85,6 +112,9 @@ interface ResolvedConfig {
   readonly importTimeoutMs: number
   readonly defaultReadBefore: number
   readonly defaultReadAfter: number
+  readonly defaultReadingPackBlocksPerSection: number
+  readonly maxReadingPackBlocksPerSection: number
+  readonly maxReadingPackSections: number
 }
 
 interface ProjectedLocator {
@@ -253,13 +283,40 @@ const READ_OUTPUT_SCHEMA = {
   },
 } as const
 
-/** Register paper-reading prompt guidance and four tools. */
+const READING_PACK_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    document_id: { type: 'string', required: true },
+    extraction: { ...EXTRACTION_SCHEMA, required: true },
+    requested_roles: { type: 'array', required: true, items: { type: 'string', enum: [...READING_ROLES] } },
+    sections: {
+      type: 'array',
+      required: true,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          role: { type: 'string', required: true, enum: [...READING_ROLES] },
+          matched_by: { type: 'string', required: true, enum: ['heading', 'labeled-paragraph'] },
+          blocks: { type: 'array', required: true, items: BLOCK_SCHEMA },
+          total_blocks: { type: 'integer', required: true },
+          truncated: { type: 'boolean', required: true },
+        },
+      },
+    },
+    missing_roles: { type: 'array', required: true, items: { type: 'string', enum: [...READING_ROLES] } },
+    truncated: { type: 'boolean', required: true },
+  },
+} as const
+
+/** Register paper-reading prompt guidance and five tools. */
 export function apply(ctx: Context, config: Config): void {
   const resolved = resolveConfig(config)
   ctx.systemPrompt.section({
     name: 'tool:research-document',
     order: 112,
-    text: 'Use paper_import for a local PDF, then paper_outline and paper_search to navigate it, and paper_read to recover the exact surrounding evidence before making a claim. Preserve the returned document, page, block, parser-version, and quote-hash anchors in research notes. The first provider extracts only native PDF text: extraction.text=none means OCR is required and no text claim is supported by this import.',
+    text: 'Use paper_import for a local PDF. Use paper_reading_pack for a deterministic first pass over recognized abstract, introduction, related-work, method, results, limitations, and conclusion sections; missing_roles means the parser did not recognize a matching label, not that the paper lacks that content. Use paper_outline and paper_search to navigate further, and paper_read to recover the exact surrounding evidence before making a claim. A reading pack contains source excerpts, not a generated summary. Preserve the returned document, page, block, parser-version, and quote-hash anchors in research notes. The first provider extracts only native PDF text: extraction.text=none means OCR is required and no text claim is supported by this import.',
   })
 
   ctx.tools.register(defineTool({
@@ -402,6 +459,71 @@ export function apply(ctx: Context, config: Config): void {
       return { card: 'generic', title: `Read paper block ${shortId(args.block_id)}`, kind: 'read' }
     },
   }))
+
+  ctx.tools.register(defineTool({
+    name: 'paper_reading_pack',
+    description: 'Collect bounded, citeable excerpts from recognized semantic sections for a fast first reading. This deterministic navigation aid does not summarize or assert that an unrecognized section is absent.',
+    parameters: {
+      document_id: { type: 'string', required: true, description: 'Exact document id returned by paper_import.' },
+      section_roles: {
+        type: 'array',
+        items: { type: 'string', enum: [...READING_ROLES] },
+        description: `Optional ordered semantic sections, up to ${resolved.maxReadingPackSections}. Defaults to the supported roles allowed by that cap.`,
+      },
+      blocks_per_section: {
+        type: 'integer',
+        description: `Maximum blocks per matched section; defaults to ${resolved.defaultReadingPackBlocksPerSection} and cannot exceed ${resolved.maxReadingPackBlocksPerSection}.`,
+      },
+    },
+    output: {
+      schema: READING_PACK_OUTPUT_SCHEMA,
+      render: (_args, value) => [{ type: 'text', text: formatReadingPack(value) }],
+      presentationMeta: (_args, value) => taggedMeta('dsh/paper-reading-pack', value),
+    },
+    isConcurrencySafe: () => true,
+    execute(args) {
+      const documentId = parseDocumentId(args.document_id)
+      const roles = resolveReadingRoles(args.section_roles, resolved.maxReadingPackSections)
+      const blocksPerSection = boundedOptionalCount(
+        'blocks_per_section',
+        args.blocks_per_section,
+        resolved.maxReadingPackBlocksPerSection,
+        resolved.defaultReadingPackBlocksPerSection,
+      )
+      const document = ctx.researchDocuments.get(documentId)
+      const blocks = document.pages.flatMap(page => page.blocks)
+      const matches = roles.map(role => findReadingSection(blocks, role, blocksPerSection, document.title))
+      const sections = matches.flatMap(match => match === undefined ? [] : [match])
+      const projectedBlocks = sections.flatMap(section => section.blocks)
+      const blockBudgets = distributeItemBudgets(
+        resolved.maxOutputTextChars,
+        projectedBlocks.map(blockProjectionCost),
+      )
+      let projectedIndex = 0
+      const projectedSections = sections.map(section => ({
+        role: section.role,
+        matched_by: section.matchedBy,
+        blocks: section.blocks.map((block, index) =>
+          projectBlock(block, index === 0, blockBudgets[projectedIndex++]!)),
+        total_blocks: section.totalBlocks,
+        truncated: section.truncated,
+      }))
+      const found = new Set(projectedSections.map(section => section.role))
+      const textTruncated = projectedSections.some(section => section.blocks.some(block =>
+        block.text_truncated || block.section_path_truncated))
+      return Promise.resolve({
+        document_id: documentId,
+        extraction: document.extraction,
+        requested_roles: [...roles],
+        sections: projectedSections,
+        missing_roles: roles.filter(role => !found.has(role)),
+        truncated: textTruncated || projectedSections.some(section => section.truncated),
+      })
+    },
+    presentCall(args): GenericCallView {
+      return { card: 'generic', title: `Build reading pack ${shortId(args.document_id)}`, kind: 'read' }
+    },
+  }))
 }
 
 function resolveConfig(config: Config = {}): ResolvedConfig {
@@ -422,14 +544,31 @@ function resolveConfig(config: Config = {}): ResolvedConfig {
       'defaultReadBefore', config.defaultReadBefore ?? DEFAULT_READ_BEFORE,
     ),
     defaultReadAfter: nonNegativeSafeInteger('defaultReadAfter', config.defaultReadAfter ?? DEFAULT_READ_AFTER),
+    defaultReadingPackBlocksPerSection: positiveSafeInteger(
+      'defaultReadingPackBlocksPerSection',
+      config.defaultReadingPackBlocksPerSection ?? DEFAULT_READING_PACK_BLOCKS_PER_SECTION,
+    ),
+    maxReadingPackBlocksPerSection: positiveSafeInteger(
+      'maxReadingPackBlocksPerSection',
+      config.maxReadingPackBlocksPerSection ?? DEFAULT_MAX_READING_PACK_BLOCKS_PER_SECTION,
+    ),
+    maxReadingPackSections: boundedPositiveSafeInteger(
+      'maxReadingPackSections',
+      config.maxReadingPackSections ?? DEFAULT_MAX_READING_PACK_SECTIONS,
+      READING_ROLES.length,
+    ),
   }
   if (resolved.defaultReadBefore + resolved.defaultReadAfter + 1 > resolved.maxReadBlocks) {
     throw new TypeError('tool-research-document: default read window exceeds maxReadBlocks')
+  }
+  if (resolved.defaultReadingPackBlocksPerSection > resolved.maxReadingPackBlocksPerSection) {
+    throw new TypeError('tool-research-document: default reading-pack block count exceeds maxReadingPackBlocksPerSection')
   }
   const maximumReturnedItems = Math.max(
     resolved.maxOutlineEntries,
     resolved.maxSearchResults,
     resolved.maxReadBlocks,
+    resolved.maxReadingPackSections * resolved.maxReadingPackBlocksPerSection,
   )
   if (resolved.maxOutputTextChars < maximumReturnedItems) {
     throw new TypeError('tool-research-document: maxOutputTextChars must cover every returned item')
@@ -442,6 +581,14 @@ function positiveSafeInteger(name: string, value: number): number {
     throw new TypeError(`tool-research-document: ${name} must be a positive safe integer`)
   }
   return value
+}
+
+function boundedPositiveSafeInteger(name: string, value: number, maximum: number): number {
+  const resolved = positiveSafeInteger(name, value)
+  if (resolved > maximum) {
+    throw new TypeError(`tool-research-document: ${name} must be at most ${maximum}`)
+  }
+  return resolved
 }
 
 function nonNegativeSafeInteger(name: string, value: number): number {
@@ -467,12 +614,181 @@ function parseBlockId(value: string): ReturnType<typeof ResearchDocumentBlockId>
   return ResearchDocumentBlockId(value)
 }
 
-function boundedOptionalCount(name: string, value: number | undefined, maximum: number): number {
-  if (value === undefined) return maximum
+function boundedOptionalCount(name: string, value: number | undefined, maximum: number, fallback = maximum): number {
+  if (value === undefined) return fallback
   if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
     throw new Error(`${name} must be an integer from 1 through ${maximum}`)
   }
   return value
+}
+
+function resolveReadingRoles(values: readonly string[] | undefined, maximum: number): readonly ReadingRole[] {
+  if (values === undefined) return READING_ROLES.slice(0, maximum)
+  if (values.length === 0) throw new Error('section_roles must contain at least one role')
+  const roles: ReadingRole[] = []
+  for (const value of values) {
+    if (!isReadingRole(value)) throw new Error(`unsupported section role: ${value}`)
+    if (!roles.includes(value)) roles.push(value)
+  }
+  if (roles.length > maximum) throw new Error(`section_roles must contain at most ${maximum} unique roles`)
+  return roles
+}
+
+function isReadingRole(value: string): value is ReadingRole {
+  return (READING_ROLES as readonly string[]).includes(value)
+}
+
+interface ReadingSectionMatch {
+  readonly role: ReadingRole
+  readonly matchedBy: 'heading' | 'labeled-paragraph'
+  readonly blocks: readonly ResearchDocumentBlock[]
+  readonly totalBlocks: number
+  readonly truncated: boolean
+}
+
+function findReadingSection(
+  blocks: readonly ResearchDocumentBlock[],
+  role: ReadingRole,
+  maximum: number,
+  documentTitle: string | undefined,
+): ReadingSectionMatch | undefined {
+  const headingIndex = findReadingHeading(blocks, role, documentTitle)
+  if (headingIndex >= 0) return sectionFromHeading(blocks, headingIndex, role, maximum)
+  if (role !== 'abstract') return undefined
+  const paragraphIndex = blocks.findIndex(block =>
+    block.kind === 'paragraph' && paragraphLabelsAbstract(block.text))
+  if (paragraphIndex < 0) return undefined
+  const untilHeading = blocks.slice(paragraphIndex).findIndex((block, index) => index > 0 && block.kind === 'heading')
+  const end = untilHeading < 0 ? blocks.length : paragraphIndex + untilHeading
+  return sectionMatch(role, 'labeled-paragraph', blocks.slice(paragraphIndex, end), maximum)
+}
+
+function findReadingHeading(
+  blocks: readonly ResearchDocumentBlock[],
+  role: ReadingRole,
+  documentTitle: string | undefined,
+): number {
+  const title = documentTitle === undefined ? undefined : normalizeSectionLabel(documentTitle)
+  const candidates = blocks.flatMap((block, index) =>
+    block.kind === 'heading' && headingMatchKind(block.text, role) !== undefined ? [index] : [])
+  const nonTitle = title === undefined
+    ? candidates
+    : candidates.filter(index => normalizeSectionLabel(blocks[index]!.text) !== title)
+  if (nonTitle.length > 0) {
+    const first = nonTitle[0]!
+    if (!isDanglingSectionLabel(blocks[first]!.text, role)) return first
+    return nonTitle.find(index => !isDanglingSectionLabel(blocks[index]!.text, role)) ?? first
+  }
+  if (candidates.length > 1) return candidates[1]!
+  return -1
+}
+
+function sectionFromHeading(
+  blocks: readonly ResearchDocumentBlock[],
+  headingIndex: number,
+  role: ReadingRole,
+  maximum: number,
+): ReadingSectionMatch {
+  const heading = blocks[headingIndex]
+  if (heading?.kind !== 'heading' || heading.headingLevel === undefined) {
+    throw new Error('paper reading-pack heading match lost its heading level')
+  }
+  const headingLevel = heading.headingLevel
+  let end = blocks.length
+  let sawParagraph = false
+  for (let index = headingIndex + 1; index < blocks.length; index++) {
+    const block = blocks[index]!
+    if (block.kind === 'paragraph') {
+      sawParagraph = true
+      continue
+    }
+    if (block.headingLevel !== undefined
+      && (block.headingLevel <= headingLevel
+        || headingMatchesDifferentRole(block.text, role)
+        || sawParagraph)) {
+      end = index
+      break
+    }
+  }
+  return sectionMatch(role, 'heading', blocks.slice(headingIndex, end), maximum)
+}
+
+function sectionMatch(
+  role: ReadingRole,
+  matchedBy: ReadingSectionMatch['matchedBy'],
+  values: readonly ResearchDocumentBlock[],
+  maximum: number,
+): ReadingSectionMatch {
+  return {
+    role,
+    matchedBy,
+    blocks: values.slice(0, maximum),
+    totalBlocks: values.length,
+    truncated: values.length > maximum,
+  }
+}
+
+const ROLE_LABELS: Readonly<Record<ReadingRole, readonly string[]>> = {
+  abstract: ['abstract', '摘要'],
+  introduction: ['introduction', 'intro', 'introduction and background', '引言', '介绍'],
+  'related-work': ['related work', 'background', 'literature review', '相关工作', '研究背景', '文献综述'],
+  method: ['method', 'methods', 'methodology', 'approach', 'materials and methods', 'methods and materials', '方法', '研究方法', '方法论'],
+  results: ['result', 'results', 'experiments', 'evaluation', 'results and discussion', '结果', '实验', '评估'],
+  limitations: ['limitation', 'limitations', 'threats to validity', '局限', '局限性', '限制', '有效性威胁'],
+  conclusion: ['conclusion', 'conclusions', 'concluding remarks', 'conclusion and future work', 'conclusions and future work', '总结', '结论'],
+}
+
+function headingMatchesRole(text: string, role: ReadingRole): boolean {
+  return headingMatchKind(text, role) !== undefined
+}
+
+function headingMatchesDifferentRole(text: string, role: ReadingRole): boolean {
+  return READING_ROLES.some(candidate => candidate !== role && headingMatchesRole(text, candidate))
+}
+
+function paragraphLabelsAbstract(text: string): boolean {
+  return ROLE_LABELS.abstract.some(label => matchesSectionLabel(text, label))
+}
+
+function headingMatchKind(text: string, role: ReadingRole): 'exact' | 'subtitle' | undefined {
+  if (ROLE_LABELS[role].some(label => normalizeSectionLabel(text) === label)) return 'exact'
+  return ROLE_LABELS[role].some(label => matchesSectionSubtitle(text, label)) ? 'subtitle' : undefined
+}
+
+function matchesSectionLabel(value: string, label: string): boolean {
+  return normalizeSectionLabel(value) === label || matchesSectionSubtitle(value, label)
+}
+
+function matchesSectionSubtitle(value: string, label: string): boolean {
+  const stripped = stripSectionNumber(value).toLocaleLowerCase('en-US')
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replaceAll(' ', '\\s+')
+  return new RegExp(`^${escaped}\\s*[.:：。—–-]\\s*\\S`, 'iu').test(stripped)
+}
+
+function isDanglingSectionLabel(value: string, role: ReadingRole): boolean {
+  const stripped = stripSectionNumber(value).toLocaleLowerCase('en-US')
+  return ROLE_LABELS[role].some(label => {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replaceAll(' ', '\\s+')
+    return new RegExp(`^${escaped}\\s*[.:：。—–-]\\s*$`, 'iu').test(stripped)
+  })
+}
+
+function normalizeSectionLabel(value: string): string {
+  return stripSectionNumber(value)
+    .normalize('NFKC')
+    .toLocaleLowerCase('en-US')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
+function stripSectionNumber(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(/^\s*\((?:\d+(?:\.\d+)*|[ivxlcdm]+|[一二三四五六七八九十百千万零〇]+)\)[\s、:：.-]*/iu, '')
+    .replace(/^\s*(?:第\s*)?(?:\d+(?:\.\d+)*|[一二三四五六七八九十百千万零〇]+)\s*[章节部分][\s.)、:：-]*/u, '')
+    .replace(/^\s*(?:\d+(?:\.\d+)*|[ivxlcdm]+)[\s.)、:：-]+/iu, '')
+    .replace(/^\s*(?:第\s*)?[一二三四五六七八九十百千万零〇]+[\s.)、:：-]+/u, '')
+    .trim()
 }
 
 function nonNegativeOptionalCount(name: string, value: number | undefined, fallback: number): number {
@@ -485,10 +801,43 @@ function perItemBudget(total: number, count: number): number {
   return count === 0 ? total : Math.max(1, Math.floor(total / count))
 }
 
+function blockProjectionCost(block: ResearchDocumentBlock): number {
+  return block.sectionPath.reduce((total, value) => total + value.length, 0) + Math.max(1, block.text.length)
+}
+
+function distributeItemBudgets(total: number, costs: readonly number[]): number[] {
+  const budgets = Array.from({ length: costs.length }, () => 0)
+  let remaining = total
+  let pending = costs.map((_value, index) => index)
+  while (pending.length > 0) {
+    const share = Math.floor(remaining / pending.length)
+    const satisfied = pending.filter(index => costs[index]! <= share)
+    if (satisfied.length === 0) {
+      for (const [position, index] of pending.entries()) {
+        budgets[index] = share + (position < remaining % pending.length ? 1 : 0)
+      }
+      return budgets
+    }
+    const satisfiedSet = new Set(satisfied)
+    for (const index of satisfied) {
+      budgets[index] = costs[index]!
+      remaining -= costs[index]!
+    }
+    pending = pending.filter(index => !satisfiedSet.has(index))
+  }
+  return budgets
+}
+
 function projectText(text: string, limit: number): ProjectedText {
   if (text.length <= limit) return { text, text_truncated: false }
   if (limit === 1) return { text: '…', text_truncated: true }
-  return { text: `${text.slice(0, limit - 1)}…`, text_truncated: true }
+  const requestedEnd = limit - 1
+  const safeEnd = isHighSurrogate(text.charCodeAt(requestedEnd - 1)) ? requestedEnd - 1 : requestedEnd
+  return { text: `${text.slice(0, safeEnd)}…`, text_truncated: true }
+}
+
+function isHighSurrogate(value: number): boolean {
+  return value >= 0xD800 && value <= 0xDBFF
 }
 
 function projectLocator(locator: ResearchDocumentBlockLocator): ProjectedLocator {
@@ -652,6 +1001,44 @@ function formatRead(value: {
   }
   lines.push(`The focus block is ${value.focus_block_id}; preserve its document, parser, page, block, and quote anchors in research notes.`)
   return lines.join('\n\n')
+}
+
+function formatReadingPack(value: {
+  document_id: string
+  extraction: ResearchDocumentExtraction
+  requested_roles: readonly ReadingRole[]
+  sections: readonly {
+    role: ReadingRole
+    matched_by: 'heading' | 'labeled-paragraph'
+    blocks: readonly ProjectedBlock[]
+    total_blocks: number
+    truncated: boolean
+  }[]
+  missing_roles: readonly ReadingRole[]
+  truncated: boolean
+}): string {
+  const lines = evidenceHeader('Paper reading pack', value.document_id, value.extraction)
+  if (value.sections.length === 0) lines.push('No requested semantic section labels were recognized.')
+  for (const section of value.sections) {
+    lines.push(`\n## ${section.role} (${section.matched_by})`)
+    for (const block of section.blocks) {
+      lines.push(`${block.focus ? 'MATCH' : 'CONTEXT'} ${anchor(block.locator)}\n${block.text}`)
+    }
+    if (section.truncated) lines.push(`Showing ${section.blocks.length} of ${section.total_blocks} blocks for this section.`)
+  }
+  if (value.missing_roles.length > 0) {
+    lines.push(`\nUnrecognized roles: ${value.missing_roles.join(', ')}. This is not evidence that those topics are absent.`)
+  }
+  if (value.sections.some(section => section.blocks.some(block =>
+    block.text_truncated || block.section_path_truncated))) {
+    lines.push('\nSome displayed passages or section paths are text-truncated. paper_read uses the same configured text budget; raise that deployment limit if the exact block remains truncated.')
+  }
+  if (value.extraction.text === 'none') {
+    lines.push('\nNo native-text passages are available. OCR is required before text claims can be supported.')
+  } else {
+    lines.push('\nAny returned passages are extracted source text, not a generated summary. Use paper_read before relying on a specific claim.')
+  }
+  return lines.join('\n')
 }
 
 function evidenceHeader(title: string, documentId: string, extraction: ResearchDocumentExtraction): string[] {

@@ -10,9 +10,9 @@ The bundle adds local native-text PDF reading, a durable paper library, and an a
 
 | Capability | Tools and behavior |
 |---|---|
-| Paper reading | `paper_import`, `paper_outline`, `paper_search`, and `paper_read` import a local PDF, navigate its structure, search lexical matches, and recover exact surrounding blocks with physical-page, parser-revision, and quote-hash anchors. |
+| Paper reading | `paper_import`, `paper_reading_pack`, `paper_outline`, `paper_search`, and `paper_read` import a local PDF, collect bounded excerpts from recognized key sections, navigate its structure, search lexical matches, and recover exact surrounding blocks with physical-page, parser-revision, and quote-hash anchors. |
 | Paper library | `paper_library_register`, `paper_library_list`, `paper_library_get`, and `paper_library_alias` retain paper identities, bibliography provenance, exact source versions, parser observations, and reversible aliases in profile storage. |
-| Research integration | Research-question, evidence, note, claim, entity, observation, comparison-protocol, synthesis, matrix, and audit operations build a traceable record across papers without presenting authored interpretation as source text. |
+| Research integration | Research-question, evidence, note, claim, entity, observation, comparison-protocol, synthesis, matrix, audit, and `research_review_render` operations build a traceable record across papers and render an explicit active synthesis as review-ready Markdown without presenting authored interpretation as source text. |
 
 This standalone bundle mounts both the research services and their model-facing tool consumers in the selected profile. Installing it is an explicit grant to every agent started through that profile: each agent can see the research tool schemas and their stable prompt guidance.
 
@@ -45,21 +45,23 @@ Restart a running profile after adding, updating, or removing the bundle.
 
 ## Recommended workflow
 
-1. Import a PDF with `paper_import`, inspect headings with `paper_outline`, find relevant blocks with `paper_search`, and call `paper_read` before relying on a passage.
+1. Import a PDF with `paper_import`, use `paper_reading_pack` for a bounded first pass over recognized key sections, inspect headings with `paper_outline`, find additional blocks with `paper_search`, and call `paper_read` before relying on a passage.
 2. Register the retained document with `paper_library_register`. Keep the returned paper, source-version, document, block, parser-version, physical-page, and quote-hash identifiers with your notes.
 3. Create a research question, capture exact evidence, and record reading notes or passage questions. Write source statements separately from explicit inferences.
 4. When comparing numeric results, normalize the method, dataset, metric, value, unit, split, uncertainty, evaluation protocol, and conditions for each paper. Record an explicit comparison protocol only after the retained fields are compatible.
-5. Use the matrix and audit views to find missing or stale support, then write structured synthesis findings that cite active source claims.
+5. Use the matrix and audit views to find missing or stale support, then write structured synthesis findings that cite active source claims. Pass an explicit active synthesis id to `research_review_render` to obtain paged Markdown with evidence and bibliography ledgers.
 
 You can describe the task in natural language; the agent chooses the tools. For example:
 
 ```text
-Import papers/one.pdf, show me its outline, and find passages about the evaluation dataset. Read the surrounding blocks before summarizing them. Register the paper, create a research question about dataset effects, capture exact evidence for each source statement, and show the audit view before synthesizing a conclusion.
+Import papers/one.pdf and build a reading pack for its abstract, introduction, method, results, limitations, and conclusion. Use the outline and search tools for anything the pack misses, and read the surrounding blocks before relying on them. Register the paper, create a research question about dataset effects, capture exact evidence for each source statement, show the audit view, write a synthesis, and render that synthesis as a review draft.
 ```
+
+`paper_reading_pack` recognizes a closed set of English and Chinese section labels and returns individually anchored source blocks, subject to the configured text budget and explicit `text_truncated` flags. It does not summarize those blocks, and an entry in `missing_roles` means only that the parser did not recognize a matching label. `research_review_render` likewise does not write new findings: it renders one selected active synthesis and labels source summaries, inferences, evidence relations, current verification state, and incomplete bibliography metadata. Exact selected text is opt-in through `include_selected_quotes`; every continuation page must reuse the first page's `render_digest`, so a changed record cannot be silently combined with an earlier page. A `ready-with-warnings` result requires review before publication.
 
 ## Configuration
 
-The bundle defaults live in [`cordis.patch.yml`](cordis.patch.yml). A profile's own `cordis.patch.yml` is applied later and can override a row by `id`. A row override replaces its complete `config` value rather than merging individual keys, so retain `parserProvider: pdfjs` when overriding `f1star-research-document` unless another registered parser is intentional.
+The bundle rows live in [`cordis.patch.yml`](cordis.patch.yml), while each plugin's schema supplies its defaults. A profile's own `cordis.patch.yml` is applied later and can override a row by `id`. A row override replaces its complete `config` value rather than merging individual keys, so retain `parserProvider: pdfjs` when overriding `f1star-research-document` unless another registered parser is intentional. The reading-pack controls on `f1star-tool-research-document` default to 12 blocks per section, at most 14 blocks per section, and at most 7 requested sections; `defaultReadingPackBlocksPerSection` must not exceed `maxReadingPackBlocksPerSection`, and `maxOutputTextChars` must be at least `maxReadingPackSections × maxReadingPackBlocksPerSection`. That text budget covers variable source fields; fixed provenance anchors and notices are additional bounded output. `f1star-tool-research-information.maxReviewTextChars` defaults to 2,000,000 UTF-16 code units and fails a complete review closed before paging if that limit is exceeded.
 
 For a custom profile, compose the bundles in this order:
 
@@ -75,8 +77,10 @@ Installing this bundle into a custom profile that contains only the base bundle 
 - Parsed PDF pages are process-local. After a restart, import the PDF again before reading blocks or capturing new evidence. The library records identities and observations, not the source PDF bytes.
 - Evidence records retain exact block text and provenance, but reconstructing an historical PDF still requires your own durable copy of the source file.
 - PDF.js extracts native text only. Scanned or image-only documents require OCR outside this bundle and do not support a text claim from the import.
+- Reading-pack recognition depends on extracted heading labels and approximate reading order. A missing role does not establish that the paper omits the corresponding topic.
 - Search and library matching are lexical. The bundle does not provide semantic retrieval, remote DOI or arXiv verification, automatic claim clustering, or automatic entity resolution.
-- Numeric observations and comparison protocols are authored normalizations. The bundle does not silently convert units or aliases, rank results, calculate deltas, infer statistical significance, perform meta-analysis, generate a finished literature review, or export citations.
+- Numeric observations and comparison protocols are authored normalizations. The bundle does not silently convert units or aliases, rank results, calculate deltas, infer statistical significance, or perform meta-analysis.
+- Review rendering is a deterministic Markdown projection of retained records, not automatic literature-review generation or a formal CSL/BibTeX citation exporter. It always emits exact selection hashes and offsets, includes selected text only when explicitly requested, and otherwise emits locators instead of repeating complete evidence blocks.
 
 ## Update or remove
 

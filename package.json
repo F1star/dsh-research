@@ -1,6 +1,6 @@
 {
   "name": "@f1star/dsh-research",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A DeepSeek Harness bundle for local PDF reading, durable paper records, traceable evidence, and cross-paper synthesis.",
   "type": "module",
   "main": "lib/index.js",

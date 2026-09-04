@@ -75,9 +75,12 @@ function parseResult(options: {
   }
 }
 
-function mutableParser(state: { result: ResearchDocumentParseResult }): ResearchDocumentParser {
+function mutableParser(
+  state: { result: ResearchDocumentParseResult },
+  id = 'fixture-parser',
+): ResearchDocumentParser {
   return {
-    id: 'fixture-parser',
+    id,
     available: () => true,
     supports: mediaType => mediaType === 'application/pdf',
     parse: () => Promise.resolve(state.result),
@@ -89,6 +92,7 @@ async function mount(options: {
   readonly maxDocuments?: number
   readonly toolConfig?: ResearchInformationTools.Config
   readonly parserState?: { result: ResearchDocumentParseResult }
+  readonly parserId?: string
   readonly informationConfig?: InformationConfig
 } = {}) {
   const pool = options.pool ?? new MemoryMediaPool()
@@ -106,7 +110,7 @@ async function mount(options: {
   const documentFiber = await ctx.plugin(ResearchDocumentRuntime, {
     maxDocuments: options.maxDocuments ?? 16,
   })
-  ctx.researchDocuments.registerParser(mutableParser(parserState))
+  ctx.researchDocuments.registerParser(mutableParser(parserState, options.parserId))
   const toolFiber = await ctx.plugin(ResearchInformationTools, options.toolConfig ?? {})
   return {
     ctx,
@@ -191,12 +195,13 @@ function paragraph(document: ResearchDocument) {
 }
 
 describe('research-information tool composition', () => {
-  it('registers ten tools, stable workflow guidance, render metadata, and intended concurrency', async () => {
+  it('registers eleven tools, stable workflow guidance, render metadata, and intended concurrency', async () => {
     const setup = await mount()
     expect(setup.ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'research_question_write',
       'research_question_list',
       'research_question_get',
+      'research_review_render',
       'research_evidence_capture',
       'research_note_write',
       'research_claim_write',
@@ -219,7 +224,9 @@ describe('research-information tool composition', () => {
     expect(prompt).toContain('missing matrix cell means no captured source statement')
     expect(prompt).toContain('Item and reference paging is deterministic')
     expect(prompt).toContain('Use not-applicable only as a positive authored assertion')
-    expect(prompt).toContain('Only note text and a selected observation decimal have continuation cursors')
+    expect(prompt).toContain('research_review_render only with an explicit active synthesis id')
+    expect(prompt).toContain('it never writes state or generates new research prose')
+    expect(prompt).toContain('Note text, selected observation decimals, and rendered review Markdown have continuation cursors')
     expect(prompt).toContain('Other truncated text, including entity canonical names')
     expect(prompt).toContain('repeat the same question_id, view=notes, evidence_id filter, and item offset')
     expect(prompt).toContain('repeat the exact observation filter, max_items=1, decimal_field')
@@ -234,6 +241,9 @@ describe('research-information tool composition', () => {
     expect(setup.ctx.tools.get('research_question_list')?.isConcurrencySafe?.({})).toBe(true)
     expect(setup.ctx.tools.get('research_question_get')?.isConcurrencySafe?.({
       question_id: 'not-a-valid-execution-id', view: 'audit',
+    })).toBe(true)
+    expect(setup.ctx.tools.get('research_review_render')?.isConcurrencySafe?.({
+      question_id: 'question', synthesis_id: 'synthesis',
     })).toBe(true)
     expect(Object.hasOwn(setup.ctx.tools.get('research_question_write') ?? {}, 'isConcurrencySafe')).toBe(false)
     expect(Object.hasOwn(setup.ctx.tools.get('research_note_write') ?? {}, 'isConcurrencySafe')).toBe(false)
@@ -269,6 +279,13 @@ describe('research-information tool composition', () => {
       question_id: '00000000-0000-4000-8000-123456789012',
       view: 'matrix',
     })).toEqual({ card: 'generic', title: 'Read research matrix 00000000-000…789012', kind: 'read' })
+    expect(setup.ctx.tools.get('research_review_render')?.presentCall?.({
+      question_id: 'short', synthesis_id: '00000000-0000-4000-8000-123456789012',
+    })).toEqual({
+      card: 'generic',
+      title: 'Render research review 00000000-000…789012',
+      kind: 'read',
+    })
     expect(setup.ctx.tools.get('research_evidence_capture')?.presentCall?.({
       question_id: 'short', revision: 0, document_id: 'document', block_id: 'block',
     })).toEqual({ card: 'generic', title: 'Capture evidence for short', kind: 'edit', rawInput: 'block' })
@@ -366,7 +383,7 @@ describe('research-information tool composition', () => {
     expect(renderPrompt(await setup.ctx.systemPrompt.assemble())).not.toContain('research_note_write')
 
     setup.toolFiber = await setup.ctx.plugin(ResearchInformationTools)
-    expect(setup.ctx.tools.schemas().map(schema => schema.name)).toHaveLength(10)
+    expect(setup.ctx.tools.schemas().map(schema => schema.name)).toHaveLength(11)
     expect(renderPrompt(await setup.ctx.systemPrompt.assemble())).toContain('research_note_write')
     await dispose(setup)
   })
@@ -428,7 +445,8 @@ describe('research-information tool composition', () => {
         },
       ],
     })
-    expect(value(synthesis)).toMatchObject({ status: 'created', revision: 4 })
+    const synthesisOutput = value(synthesis)
+    expect(synthesisOutput).toMatchObject({ status: 'created', revision: 4 })
     expect(synthesis.meta).toMatchObject({ kind: 'dsh/research-synthesis-write', version: 1 })
 
     const overview = value(await setup.call('research_question_get', {
@@ -501,6 +519,244 @@ describe('research-information tool composition', () => {
       inactive_synthesis_ids: [],
     })
     expect(audit.uncited_inference_finding_ids).toHaveLength(1)
+
+    const rendered = await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: synthesisOutput.synthesis_id,
+      include_selected_quotes: true,
+    })
+    const renderedOutput = value(rendered)
+    expect(renderedOutput).toMatchObject({
+      status: 'ready-with-warnings',
+      question_id: created.questionId,
+      synthesis_id: synthesisOutput.synthesis_id,
+      text_offset: 0,
+      total_warnings: 2,
+      warnings_omitted: false,
+      truncated: false,
+    })
+    expect(renderedOutput.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'uncited-inference-finding' }),
+      expect.objectContaining({ code: 'bibliography-incomplete' }),
+    ]))
+    expect(renderedOutput.markdown).toContain('# RQ1')
+    expect(renderedOutput.markdown).toContain('**[Source summary]**')
+    expect(renderedOutput.markdown).toContain('**[Inference]**')
+    expect(renderedOutput.markdown).toContain('[E1](#evidence-e1) (supports)')
+    expect(renderedOutput.markdown).toContain('Selected quote UTF-8 bytes: 15-23')
+    expect(renderedOutput.markdown).toContain('Selected quote (exact):\n\n```text\naccuracy\n```')
+    expect(renderedOutput.render_digest).toMatch(/^sha256:[0-9a-f]{64}$/u)
+    expect(renderedOutput.markdown).not.toContain(block.text)
+    expect(rendered.meta).toMatchObject({ kind: 'dsh/research-review-render', version: 1 })
+    expect(text(rendered)).toContain('status=ready-with-warnings')
+    expect(setup.ctx.researchInformation.get(ResearchQuestionId(created.questionId))?.revision).toBe(4)
+    await dispose(setup)
+  })
+
+  it('pages review Markdown, preserves adverse evidence relations, and refuses inactive syntheses', async () => {
+    const setup = await mount({ maxDocuments: 1, toolConfig: { maxOutputTextChars: 256 } })
+    const created = await createQuestion(setup, 'Paged review')
+    const document = await importAndRegister(setup, Uint8Array.of(31))
+    const block = paragraph(document)
+    const captured = value(await setup.call('research_evidence_capture', {
+      question_id: created.questionId,
+      revision: 0,
+      document_id: document.id,
+      block_id: block.id,
+    }))
+    const claim = value(await setup.call('research_claim_write', {
+      question_id: created.questionId,
+      revision: 1,
+      kind: 'source-statement',
+      facet: 'result',
+      text: 'The retained result challenges the proposed interpretation.',
+      evidence_links: [{ evidence_id: captured.evidence_id, relation: 'contradicts' }],
+    }))
+    const synthesis = value(await setup.call('research_synthesis_write', {
+      question_id: created.questionId,
+      revision: 2,
+      findings: [{
+        kind: 'source-summary',
+        stance: 'conflict',
+        text: 'The source conflicts with the proposed interpretation.',
+        claim_ids: [claim.claim_id],
+      }],
+    }))
+
+    await importAndRegister(setup, Uint8Array.of(32))
+    const pages: string[] = []
+    let offset = 0
+    let renderDigest: string | undefined
+    let firstOutput: Record<string, unknown> | undefined
+    for (;;) {
+      const result = await setup.call('research_review_render', {
+        question_id: created.questionId,
+        synthesis_id: synthesis.synthesis_id,
+        text_offset: offset,
+        ...(renderDigest === undefined ? {} : { render_digest: renderDigest }),
+      })
+      const output = value(result)
+      firstOutput ??= output
+      renderDigest ??= output.render_digest as string
+      expect(output.render_digest).toBe(renderDigest)
+      if (offset > 0) {
+        expect(output).toMatchObject({ warnings: [], warnings_omitted: true })
+      }
+      pages.push(output.markdown as string)
+      if (typeof output.next_text_offset !== 'number') break
+      expect(output.next_text_offset).toBeGreaterThan(offset)
+      offset = output.next_text_offset
+    }
+    expect(firstOutput).toMatchObject({ status: 'ready-with-warnings', text_offset: 0, truncated: true })
+    expect(firstOutput?.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'source-summary-without-supporting-evidence' }),
+      expect.objectContaining({ code: 'evidence-not-currently-readable' }),
+      expect.objectContaining({ code: 'bibliography-incomplete' }),
+    ]))
+    const markdown = pages.join('')
+    expect(markdown).toContain('[E1](#evidence-e1) (contradicts)')
+    expect(markdown).toContain('Current verification: **reimport-required**')
+    expect(markdown).toContain('Selected quote: not recorded')
+    expect(markdown).not.toContain(block.text)
+
+    const continuationOffset = firstOutput?.next_text_offset as number
+    const missingDigest = await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: synthesis.synthesis_id,
+      text_offset: continuationOffset,
+    })
+    expect(missingDigest.isError).toBe(true)
+    expect(text(missingDigest)).toContain('render_digest is required')
+    const changedDigest = await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: synthesis.synthesis_id,
+      text_offset: continuationOffset,
+      render_digest: `sha256:${'0'.repeat(64)}`,
+    })
+    expect(changedDigest.isError).toBe(true)
+    expect(text(changedDigest)).toContain('render changed')
+
+    const replacement = value(await setup.call('research_synthesis_write', {
+      question_id: created.questionId,
+      revision: 3,
+      findings: [{
+        kind: 'source-summary',
+        stance: 'qualification',
+        text: 'The source qualifies the interpretation.',
+        claim_ids: [claim.claim_id],
+      }],
+      supersedes_synthesis_id: synthesis.synthesis_id,
+    }))
+    expect(replacement).toMatchObject({ status: 'created', revision: 4 })
+    const inactive = await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: synthesis.synthesis_id,
+    })
+    expect(value(inactive)).toMatchObject({
+      status: 'not-ready',
+      warnings: [{ code: 'synthesis-inactive' }],
+      markdown: '',
+      truncated: false,
+    })
+    expect(text(inactive)).toContain('Research review is not ready')
+
+    const missing = value(await setup.call('research_review_render', {
+      question_id: '00000000-0000-4000-8000-000000000001',
+      synthesis_id: '00000000-0000-4000-8000-000000000002',
+    }))
+    expect(missing).toMatchObject({
+      status: 'not-ready',
+      warnings: [{ code: 'question-not-found' }],
+    })
+    expect(setup.ctx.researchInformation.get(ResearchQuestionId(created.questionId))?.revision).toBe(4)
+    await dispose(setup)
+  })
+
+  it('preserves exact selected whitespace and safely renders parser metadata', async () => {
+    const selected = 'alpha  beta\n gamma'
+    const setup = await mount({
+      parserState: { result: parseResult({ text: selected }) },
+      parserId: 'fixture-`<script>alert(1)</script>',
+    })
+    const created = await createQuestion(setup, 'Exact quote review')
+    const document = await importAndRegister(setup, Uint8Array.of(33))
+    const evidence = value(await setup.call('research_evidence_capture', {
+      question_id: created.questionId,
+      revision: 0,
+      document_id: document.id,
+      block_id: paragraph(document).id,
+      quote: selected,
+    }))
+    const claim = value(await setup.call('research_claim_write', {
+      question_id: created.questionId,
+      revision: 1,
+      kind: 'source-statement',
+      facet: 'result',
+      text: 'The source contains an exact selected passage.',
+      evidence_links: [{ evidence_id: evidence.evidence_id, relation: 'supports' }],
+    }))
+    const synthesis = value(await setup.call('research_synthesis_write', {
+      question_id: created.questionId,
+      revision: 2,
+      findings: [{
+        kind: 'source-summary',
+        stance: 'agreement',
+        text: 'The retained source statement is represented.',
+        claim_ids: [claim.claim_id],
+      }],
+    }))
+    const output = value(await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: synthesis.synthesis_id,
+      include_selected_quotes: true,
+    }))
+    const markdown = output.markdown as string
+    expect(markdown).toContain(`Selected quote UTF-8 bytes: 0-${selected.length}`)
+    expect(markdown).toContain(`\`\`\`text\n${selected}\n\`\`\``)
+    expect(markdown).not.toContain('<script>')
+    expect(markdown).toContain('fixture-\\`\\<script\\>alert')
+    await dispose(setup)
+  })
+
+  it('fails closed before a complete review exceeds its deployment limit', async () => {
+    const setup = await mount({ toolConfig: { maxReviewTextChars: 256 } })
+    const created = await createQuestion(setup, 'Bounded review')
+    const document = await importAndRegister(setup, Uint8Array.of(34))
+    const evidence = value(await setup.call('research_evidence_capture', {
+      question_id: created.questionId,
+      revision: 0,
+      document_id: document.id,
+      block_id: paragraph(document).id,
+    }))
+    const claim = value(await setup.call('research_claim_write', {
+      question_id: created.questionId,
+      revision: 1,
+      kind: 'source-statement',
+      facet: 'result',
+      text: 'A bounded source statement.',
+      evidence_links: [{ evidence_id: evidence.evidence_id, relation: 'supports' }],
+    }))
+    const synthesis = value(await setup.call('research_synthesis_write', {
+      question_id: created.questionId,
+      revision: 2,
+      findings: [{
+        kind: 'source-summary',
+        stance: 'agreement',
+        text: 'A bounded finding.',
+        claim_ids: [claim.claim_id],
+      }],
+    }))
+    const output = value(await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: synthesis.synthesis_id,
+    }))
+    expect(output).toMatchObject({
+      status: 'not-ready',
+      warnings: [{ code: 'review-too-large' }],
+      total_warnings: 1,
+      markdown: '',
+      truncated: false,
+    })
     await dispose(setup)
   })
 
@@ -3880,11 +4136,16 @@ describe('research-information tool composition', () => {
     }).toThrow(
       'maxOutputTextChars must be at least 256',
     )
+    expect(() => {
+      ResearchInformationTools.apply(setup.ctx, { maxReviewTextChars: 255 })
+    }).toThrow(
+      'maxReviewTextChars must be at least 256',
+    )
     const promptSection = vi.spyOn(setup.ctx.systemPrompt, 'section').mockReturnValue(() => {})
     const toolRegister = vi.spyOn(setup.ctx.tools, 'register').mockReturnValue(() => {})
     ResearchInformationTools.apply(setup.ctx)
     expect(promptSection).toHaveBeenCalledOnce()
-    expect(toolRegister).toHaveBeenCalledTimes(10)
+    expect(toolRegister).toHaveBeenCalledTimes(11)
     promptSection.mockRestore()
     toolRegister.mockRestore()
     await dispose(setup)

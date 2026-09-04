@@ -69,4 +69,19 @@ describe('standalone research bundle', () => {
     ])
     expect(rows[0]?.config).toEqual({ parserProvider: 'pdfjs' })
   })
+
+  it('ships the v0.2 tools through the committed built entry points', () => {
+    const documentTools = readFileSync(
+      resolve(root, 'lib/tool-research-document/index.js'),
+      'utf8',
+    )
+    const informationTools = readFileSync(
+      resolve(root, 'lib/tool-research-information/index.js'),
+      'utf8',
+    )
+
+    expect(documentTools).toContain("name: 'paper_reading_pack'")
+    expect(informationTools).toContain("name: 'research_review_render'")
+    expect(informationTools).toContain('render_digest')
+  })
 })
