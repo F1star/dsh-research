@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { ResearchQuestionId, ResearchQuestionRecord } from './types.ts';
 /** Durable schema for one research-question aggregate. */
 export declare const researchQuestionRecord: z.ZodType<ResearchQuestionRecord>;
-/** Version-four aggregate store for normalized observations and explicit comparison protocols. */
+/** Version-five aggregate store whose synthesis findings explicitly retain comparison protocols. */
 export declare const researchInformationDomainSpec: {
     name: string;
     version: number;

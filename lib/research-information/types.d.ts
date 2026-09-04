@@ -92,6 +92,8 @@ export interface ResearchFinding {
     readonly text: string;
     /** Active claims used by this finding; source summaries require evidence-backed source statements. */
     readonly claimIds: readonly ResearchClaimId[];
+    /** Active, non-stale authored protocols used as the comparison basis for an inference. */
+    readonly comparisonProtocolIds: readonly ResearchComparisonProtocolId[];
 }
 /** Immutable cross-paper synthesis over claims from one research question. */
 export interface ResearchSynthesis {
@@ -320,6 +322,8 @@ export interface ResearchFindingInput {
     readonly stance: ResearchFindingStance;
     readonly text: string;
     readonly claimIds: readonly ResearchClaimId[];
+    /** Authored comparison bases used by an inference; omitted when the finding makes no comparison. */
+    readonly comparisonProtocolIds?: readonly ResearchComparisonProtocolId[];
 }
 /** Append one immutable synthesis and optionally supersede an active synthesis. */
 export interface WriteResearchSynthesisRequest {
@@ -378,7 +382,7 @@ export interface WriteResearchComparisonProtocolRequest {
     readonly author: ResearchAuthorship;
 }
 /** Configured resource category that rejected an otherwise valid mutation. */
-export type ResearchInformationCapacity = 'questions' | 'evidence' | 'claims' | 'syntheses' | 'findings' | 'evidence-links' | 'claim-references' | 'reading-notes' | 'entities' | 'entity-claim-references' | 'entity-supersession-references' | 'observations' | 'observation-conditions' | 'comparison-protocols' | 'comparison-observation-references' | 'field-bytes' | 'block-bytes' | 'aggregate-bytes';
+export type ResearchInformationCapacity = 'questions' | 'evidence' | 'claims' | 'syntheses' | 'findings' | 'evidence-links' | 'claim-references' | 'comparison-protocol-references' | 'reading-notes' | 'entities' | 'entity-claim-references' | 'entity-supersession-references' | 'observations' | 'observation-conditions' | 'comparison-protocols' | 'comparison-observation-references' | 'field-bytes' | 'block-bytes' | 'aggregate-bytes';
 /** Exact durable-provenance check that rejected an evidence capture. */
 export type ResearchEvidenceProvenanceMismatch = 'document' | 'parser-observation' | 'block-hash' | 'selection-hash' | 'selection-offset';
 /** Failures shared by every mutation against an existing question. */
@@ -456,6 +460,23 @@ export type ResearchSynthesisReferenceFailure = {
 } | {
     readonly status: 'source-summary-claim-kind-mismatch';
     readonly findingIndex: number;
+    readonly claimId: ResearchClaimId;
+} | {
+    readonly status: 'comparison-protocol-not-found';
+    readonly findingIndex: number;
+    readonly comparisonProtocolId: ResearchComparisonProtocolId;
+} | {
+    readonly status: 'comparison-protocol-inactive' | 'comparison-protocol-stale';
+    readonly findingIndex: number;
+    readonly comparisonProtocolId: ResearchComparisonProtocolId;
+} | {
+    readonly status: 'comparison-protocol-finding-kind-mismatch';
+    readonly findingIndex: number;
+    readonly comparisonProtocolId: ResearchComparisonProtocolId;
+} | {
+    readonly status: 'comparison-protocol-result-claim-missing';
+    readonly findingIndex: number;
+    readonly comparisonProtocolId: ResearchComparisonProtocolId;
     readonly claimId: ResearchClaimId;
 } | {
     readonly status: 'supersedes-synthesis-not-found';

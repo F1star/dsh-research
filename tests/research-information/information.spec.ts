@@ -21,6 +21,8 @@ import {
   MemoryStorageBackend,
 } from '../helpers/memory-backend.ts'
 import ResearchInformation, {
+  DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING,
+  DEFAULT_MAX_OBSERVATION_REFERENCES_PER_PROTOCOL,
   ResearchAuthorId,
   ResearchClaimId,
   ResearchComparisonProtocolId,
@@ -138,6 +140,7 @@ function synthesis(id = 'synthesis-a', claimId = ResearchClaimId('claim-a')): Re
       stance: 'agreement',
       text: `Finding ${id}`,
       claimIds: [claimId],
+      comparisonProtocolIds: [],
     }],
     createdBy: author,
     createdAt: laterAt,
@@ -204,7 +207,7 @@ function poolWithQuestions(records: readonly [string, ResearchQuestionRecord][] 
     ])]]),
   })
   if (records.length > 0) {
-    pool.versions.set('research_information', 4)
+    pool.versions.set('research_information', 5)
     pool.media.set('research_information', {
       global: null,
       tables: new Map([['questions', new Map(records)]]),
@@ -824,6 +827,11 @@ describe('ResearchInformation reading notes', () => {
 })
 
 describe('ResearchInformation claims and synthesis', () => {
+  it('allows one default-size comparison protocol to expose every result claim', () => {
+    expect(DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING)
+      .toBeGreaterThanOrEqual(DEFAULT_MAX_OBSERVATION_REFERENCES_PER_PROTOCOL)
+  })
+
   it('keeps source statements single-paper and inferences explicitly separable', async () => {
     const { information } = await mount()
     let question = await createQuestion(information)
@@ -1248,6 +1256,7 @@ describe('ResearchInformation claims and synthesis', () => {
     const first = await information.writeSynthesis(base)
     expect(first.status).toBe('created')
     if (first.status !== 'created') throw new Error('expected synthesis')
+    expect(first.question.syntheses[0]?.findings[0]?.comparisonProtocolIds).toEqual([])
     const replacement = await information.writeSynthesis({
       ...base,
       expectedRevision: first.question.revision,
@@ -1274,6 +1283,327 @@ describe('ResearchInformation claims and synthesis', () => {
     await expect(information.writeSynthesis({
       ...base, expectedRevision: replacedClaim.question.revision,
     })).resolves.toEqual({ status: 'claim-inactive', claimId: source.claimId })
+  })
+
+  it('writes comparison-backed inferences only with a live protocol and all result claims', async () => {
+    const { information } = await mount()
+    const state = await createProtocolState(information)
+    const finding = {
+      kind: 'inference' as const,
+      stance: 'agreement' as const,
+      text: 'Paper A reports a higher result than paper B.',
+      claimIds: [state.foundation.claims.a.result, state.foundation.claims.b.result],
+      comparisonProtocolIds: [state.protocol.comparisonProtocolId],
+    }
+    const request = {
+      questionId: state.foundation.question.id,
+      expectedRevision: state.record.revision,
+      findings: [finding],
+      author,
+    }
+
+    await expect(information.writeSynthesis({
+      ...request,
+      findings: [{
+        ...finding,
+        comparisonProtocolIds: [ResearchComparisonProtocolId('missing')],
+      }],
+    })).resolves.toEqual({
+      status: 'comparison-protocol-not-found',
+      findingIndex: 0,
+      comparisonProtocolId: 'missing',
+    })
+    await expect(information.writeSynthesis({
+      ...request,
+      findings: [{ ...finding, kind: 'source-summary' }],
+    })).resolves.toEqual({
+      status: 'comparison-protocol-finding-kind-mismatch',
+      findingIndex: 0,
+      comparisonProtocolId: state.protocol.comparisonProtocolId,
+    })
+    await expect(information.writeSynthesis({
+      ...request,
+      findings: [{ ...finding, claimIds: [state.foundation.claims.a.result] }],
+    })).resolves.toEqual({
+      status: 'comparison-protocol-result-claim-missing',
+      findingIndex: 0,
+      comparisonProtocolId: state.protocol.comparisonProtocolId,
+      claimId: state.foundation.claims.b.result,
+    })
+    expect(information.get(state.foundation.question.id)?.syntheses).toEqual([])
+
+    const created = await information.writeSynthesis({
+      ...request,
+      findings: [{
+        ...finding,
+        comparisonProtocolIds: [
+          state.protocol.comparisonProtocolId,
+          state.protocol.comparisonProtocolId,
+        ],
+      }],
+    })
+    expect(created.status).toBe('created')
+    if (created.status !== 'created') throw new Error('expected comparison-backed synthesis')
+    expect(created.question.syntheses[0]?.findings[0]).toMatchObject({
+      kind: 'inference',
+      claimIds: [state.foundation.claims.a.result, state.foundation.claims.b.result],
+      comparisonProtocolIds: [state.protocol.comparisonProtocolId],
+    })
+  })
+
+  it('links a protocol with more than 64 distinct result claims under default capacities', async () => {
+    const { information } = await mount()
+    const foundation = await createObservationFoundation(information)
+    const observationCount = 65
+    expect(observationCount).toBeLessThanOrEqual(
+      DEFAULT_MAX_OBSERVATION_REFERENCES_PER_PROTOCOL,
+    )
+    let question = foundation.question
+    const resultClaimIds: ResearchClaimId[] = []
+    const characters: ('a' | 'b')[] = []
+    for (let index = 0; index < observationCount; index++) {
+      const character = index % 2 === 0 ? 'a' : 'b'
+      const sourceEvidence = question.evidence.find(
+        value => value.paperId === ResearchPaperId(`paper-${character}`),
+      )
+      if (sourceEvidence === undefined) throw new Error(`missing paper ${character} evidence`)
+      const result = await information.writeClaim({
+        questionId: question.id,
+        expectedRevision: question.revision,
+        kind: 'source-statement',
+        facet: 'result',
+        text: `Paper ${character.toUpperCase()} result ${index}.`,
+        evidenceLinks: [{ evidenceId: sourceEvidence.id, relation: 'supports' }],
+        author,
+      })
+      if (result.status !== 'created') throw new Error(`expected result claim ${index}`)
+      resultClaimIds.push(result.claimId)
+      characters.push(character)
+      question = result.question
+    }
+
+    const observationIds: ResearchObservationId[] = []
+    for (const [index, resultClaimId] of resultClaimIds.entries()) {
+      const character = characters[index]
+      if (character === undefined) throw new Error(`missing observation character ${index}`)
+      const result = await information.writeObservation({
+        ...observationRequest(foundation, character, question.revision),
+        resultClaimId,
+      })
+      if (result.status !== 'created') throw new Error(`expected observation ${index}`)
+      observationIds.push(result.observationId)
+      question = result.question
+    }
+
+    const protocol = await information.writeComparisonProtocol({
+      questionId: question.id,
+      expectedRevision: question.revision,
+      observationIds,
+      direction: 'non-directional',
+      compatibilityRationale: 'All observations use the same retained evaluation fields.',
+      author,
+    })
+    expect(protocol.status).toBe('created')
+    if (protocol.status !== 'created') throw new Error('expected large comparison protocol')
+    const synthesis = await information.writeSynthesis({
+      questionId: question.id,
+      expectedRevision: protocol.question.revision,
+      findings: [{
+        kind: 'inference',
+        stance: 'qualification',
+        text: 'The retained results are comparable under the authored protocol.',
+        claimIds: resultClaimIds,
+        comparisonProtocolIds: [protocol.comparisonProtocolId],
+      }],
+      author,
+    })
+    expect(synthesis.status).toBe('created')
+    if (synthesis.status !== 'created') throw new Error('expected large comparison synthesis')
+    expect(synthesis.question.syntheses[0]?.findings[0]).toMatchObject({
+      claimIds: resultClaimIds,
+      comparisonProtocolIds: [protocol.comparisonProtocolId],
+    })
+  })
+
+  it('rejects inactive and stale comparison protocols without publishing a synthesis', async () => {
+    const inactiveMounted = await mount()
+    const inactiveState = await createProtocolState(inactiveMounted.information)
+    const replacementProtocol = await inactiveMounted.information.writeComparisonProtocol({
+      questionId: inactiveState.foundation.question.id,
+      expectedRevision: inactiveState.record.revision,
+      observationIds: [
+        inactiveState.observationA.observationId,
+        inactiveState.observationB.observationId,
+      ],
+      direction: 'higher-is-better',
+      referenceObservationId: inactiveState.observationA.observationId,
+      compatibilityRationale: 'Replacement comparison basis.',
+      supersedes: inactiveState.protocol.comparisonProtocolId,
+      author,
+    })
+    if (replacementProtocol.status !== 'created') throw new Error('expected replacement protocol')
+    await expect(inactiveMounted.information.writeSynthesis({
+      questionId: inactiveState.foundation.question.id,
+      expectedRevision: replacementProtocol.question.revision,
+      findings: [{
+        kind: 'inference',
+        stance: 'agreement',
+        text: 'Comparison using an inactive basis.',
+        claimIds: [
+          inactiveState.foundation.claims.a.result,
+          inactiveState.foundation.claims.b.result,
+        ],
+        comparisonProtocolIds: [inactiveState.protocol.comparisonProtocolId],
+      }],
+      author,
+    })).resolves.toEqual({
+      status: 'comparison-protocol-inactive',
+      findingIndex: 0,
+      comparisonProtocolId: inactiveState.protocol.comparisonProtocolId,
+    })
+    expect(inactiveMounted.information.get(inactiveState.foundation.question.id)?.syntheses)
+      .toEqual([])
+
+    const staleMounted = await mount()
+    const staleState = await createProtocolState(staleMounted.information)
+    const replacementObservation = await staleMounted.information.writeObservation({
+      ...observationRequest(
+        staleState.foundation,
+        'a',
+        staleState.record.revision,
+      ),
+      supersedes: staleState.observationA.observationId,
+    })
+    if (replacementObservation.status !== 'created') throw new Error('expected replacement observation')
+    await expect(staleMounted.information.writeSynthesis({
+      questionId: staleState.foundation.question.id,
+      expectedRevision: replacementObservation.question.revision,
+      findings: [{
+        kind: 'inference',
+        stance: 'agreement',
+        text: 'Comparison using a stale basis.',
+        claimIds: [
+          staleState.foundation.claims.a.result,
+          staleState.foundation.claims.b.result,
+        ],
+        comparisonProtocolIds: [staleState.protocol.comparisonProtocolId],
+      }],
+      author,
+    })).resolves.toEqual({
+      status: 'comparison-protocol-stale',
+      findingIndex: 0,
+      comparisonProtocolId: staleState.protocol.comparisonProtocolId,
+    })
+    expect(staleMounted.information.get(staleState.foundation.question.id)?.syntheses).toEqual([])
+  })
+
+  it('rejects protocols made stale by source-claim or entity supersession', async () => {
+    const claimMounted = await mount()
+    const claimState = await createProtocolState(claimMounted.information)
+    const methodClaim = claimState.record.claims.find(
+      value => value.id === claimState.foundation.claims.a.method,
+    )
+    if (methodClaim === undefined) throw new Error('expected method source claim')
+    const replacementClaim = await claimMounted.information.writeClaim({
+      questionId: claimState.foundation.question.id,
+      expectedRevision: claimState.record.revision,
+      kind: 'source-statement',
+      facet: 'method',
+      text: 'Paper A reports corrected method details.',
+      evidenceLinks: methodClaim.evidenceLinks,
+      supersedes: methodClaim.id,
+      author,
+    })
+    if (replacementClaim.status !== 'created') throw new Error('expected replacement claim')
+    await expect(claimMounted.information.writeSynthesis({
+      questionId: claimState.foundation.question.id,
+      expectedRevision: replacementClaim.question.revision,
+      findings: [{
+        kind: 'inference',
+        stance: 'qualification',
+        text: 'Comparison using a stale source claim.',
+        claimIds: [
+          claimState.foundation.claims.a.result,
+          claimState.foundation.claims.b.result,
+        ],
+        comparisonProtocolIds: [claimState.protocol.comparisonProtocolId],
+      }],
+      author,
+    })).resolves.toEqual({
+      status: 'comparison-protocol-stale',
+      findingIndex: 0,
+      comparisonProtocolId: claimState.protocol.comparisonProtocolId,
+    })
+    expect(claimMounted.information.get(claimState.foundation.question.id)?.syntheses).toEqual([])
+
+    const entityMounted = await mount()
+    const entityState = await createProtocolState(entityMounted.information)
+    const replacementEntity = await entityMounted.information.writeEntity({
+      questionId: entityState.foundation.question.id,
+      expectedRevision: entityState.record.revision,
+      kind: 'method',
+      canonicalName: 'Replacement shared method',
+      sourceClaimIds: [
+        entityState.foundation.claims.a.method,
+        entityState.foundation.claims.b.method,
+      ],
+      supersedes: [entityState.foundation.entities.method],
+      author,
+    })
+    if (replacementEntity.status !== 'created') throw new Error('expected replacement entity')
+    await expect(entityMounted.information.writeSynthesis({
+      questionId: entityState.foundation.question.id,
+      expectedRevision: replacementEntity.question.revision,
+      findings: [{
+        kind: 'inference',
+        stance: 'qualification',
+        text: 'Comparison using a stale normalized entity.',
+        claimIds: [
+          entityState.foundation.claims.a.result,
+          entityState.foundation.claims.b.result,
+        ],
+        comparisonProtocolIds: [entityState.protocol.comparisonProtocolId],
+      }],
+      author,
+    })).resolves.toEqual({
+      status: 'comparison-protocol-stale',
+      findingIndex: 0,
+      comparisonProtocolId: entityState.protocol.comparisonProtocolId,
+    })
+    expect(entityMounted.information.get(entityState.foundation.question.id)?.syntheses).toEqual([])
+  })
+
+  it('enforces the comparison protocol reference capacity before publishing a synthesis', async () => {
+    const { information } = await mount({
+      config: { maxComparisonProtocolReferencesPerFinding: 1 },
+    })
+    const state = await createProtocolState(information)
+    const secondProtocol = await information.writeComparisonProtocol({
+      questionId: state.foundation.question.id,
+      expectedRevision: state.record.revision,
+      observationIds: [state.observationA.observationId, state.observationB.observationId],
+      direction: 'non-directional',
+      compatibilityRationale: 'Second valid comparison basis.',
+      author,
+    })
+    if (secondProtocol.status !== 'created') throw new Error('expected second protocol')
+
+    await expect(information.writeSynthesis({
+      questionId: state.foundation.question.id,
+      expectedRevision: secondProtocol.question.revision,
+      findings: [{
+        kind: 'inference',
+        stance: 'agreement',
+        text: 'Comparison with too many protocol references.',
+        claimIds: [state.foundation.claims.a.result, state.foundation.claims.b.result],
+        comparisonProtocolIds: [
+          state.protocol.comparisonProtocolId,
+          secondProtocol.comparisonProtocolId,
+        ],
+      }],
+      author,
+    })).resolves.toEqual({ status: 'capacity', resource: 'comparison-protocol-references' })
+    expect(information.get(state.foundation.question.id)?.syntheses).toEqual([])
   })
 
   it('validates synthesis input and configured capacities', async () => {
@@ -2876,7 +3206,7 @@ describe('ResearchInformation durability and stored-state validation', () => {
           ],
           comparisonProtocols: [{ ...protocol, createdAt: at(80) }],
         }),
-        pattern: /observation.*superseded before protocol creation/,
+        pattern: /observation.*superseded before comparison protocol creation/,
       },
       {
         name: 'comparison stale claim',
@@ -2908,7 +3238,7 @@ describe('ResearchInformation durability and stored-state validation', () => {
           observations: [{ ...observationA, createdAt: at(50) }, observationB],
           comparisonProtocols: [{ ...protocol, createdAt: at(80) }],
         }),
-        pattern: /observation.*with a superseded entity/,
+        pattern: /observation.*entity superseded before comparison protocol creation/,
       },
       {
         name: 'comparison one paper',
@@ -3032,6 +3362,190 @@ describe('ResearchInformation durability and stored-state validation', () => {
       pool: poolWithQuestions([[String(explicitInapplicable.id), explicitInapplicable]]),
     })
     expect(mountedInapplicable.information.get(explicitInapplicable.id)?.observations).toHaveLength(2)
+  })
+
+  it('validates durable comparison protocol provenance on synthesis findings', async () => {
+    const builder = await mount()
+    const state = await createProtocolState(builder.information)
+    const base = state.record
+    const protocol = base.comparisonProtocols.find(
+      value => value.id === state.protocol.comparisonProtocolId,
+    )!
+    const observationA = base.observations.find(
+      value => value.id === state.observationA.observationId,
+    )!
+    const transitionAt = new Date(Date.parse(base.updatedAt) + 1_000).toISOString()
+    const synthesisAt = new Date(Date.parse(base.updatedAt) + 2_000).toISOString()
+    const linkedSynthesis: ResearchSynthesis = {
+      id: ResearchSynthesisId('comparison-synthesis'),
+      findings: [{
+        id: ResearchFindingId('comparison-finding'),
+        kind: 'inference',
+        stance: 'agreement',
+        text: 'Paper A reports a higher result than paper B.',
+        claimIds: [state.foundation.claims.a.result, state.foundation.claims.b.result],
+        comparisonProtocolIds: [protocol.id],
+      }],
+      createdBy: author,
+      createdAt: synthesisAt,
+    }
+    const linkedRecord: ResearchQuestionRecord = {
+      ...base,
+      revision: base.revision + 1,
+      syntheses: [linkedSynthesis],
+      updatedAt: synthesisAt,
+    }
+    const mounted = await mount({
+      pool: poolWithQuestions([[String(linkedRecord.id), linkedRecord]]),
+    })
+    expect(mounted.information.get(linkedRecord.id)?.syntheses).toEqual([linkedSynthesis])
+
+    const parallelProtocol: ResearchComparisonProtocol = {
+      ...protocol,
+      id: ResearchComparisonProtocolId('parallel-protocol'),
+      createdAt: transitionAt,
+    }
+    const successorProtocol: ResearchComparisonProtocol = {
+      ...protocol,
+      id: ResearchComparisonProtocolId('successor-protocol'),
+      supersedes: protocol.id,
+      createdAt: transitionAt,
+    }
+    const successorObservation: ResearchObservation = {
+      ...observationA,
+      id: ResearchObservationId('successor-observation'),
+      supersedes: observationA.id,
+      createdAt: transitionAt,
+    }
+    const afterSynthesisAt = new Date(Date.parse(synthesisAt) + 1_000).toISOString()
+    const historicalSuccessorProtocol: ResearchComparisonProtocol = {
+      ...protocol,
+      id: ResearchComparisonProtocolId('historical-successor-protocol'),
+      supersedes: protocol.id,
+      createdAt: afterSynthesisAt,
+    }
+    const historicalSuccessorObservation: ResearchObservation = {
+      ...observationA,
+      id: ResearchObservationId('historical-successor-observation'),
+      supersedes: observationA.id,
+      createdAt: afterSynthesisAt,
+    }
+    const historicalRecord: ResearchQuestionRecord = {
+      ...linkedRecord,
+      revision: linkedRecord.revision + 1,
+      observations: [...linkedRecord.observations, historicalSuccessorObservation],
+      comparisonProtocols: [
+        ...linkedRecord.comparisonProtocols,
+        historicalSuccessorProtocol,
+      ],
+      updatedAt: afterSynthesisAt,
+    }
+    const historicalMounted = await mount({
+      pool: poolWithQuestions([[String(historicalRecord.id), historicalRecord]]),
+    })
+    expect(historicalMounted.information.get(historicalRecord.id)?.syntheses)
+      .toEqual([linkedSynthesis])
+    const finding = linkedSynthesis.findings[0]!
+    const scenarios: Array<{
+      name: string
+      record: ResearchQuestionRecord
+      config?: Config
+      pattern: RegExp
+    }> = [
+      {
+        name: 'comparison reference capacity',
+        record: {
+          ...linkedRecord,
+          comparisonProtocols: [...linkedRecord.comparisonProtocols, parallelProtocol],
+          syntheses: [{
+            ...linkedSynthesis,
+            findings: [{
+              ...finding,
+              comparisonProtocolIds: [protocol.id, parallelProtocol.id],
+            }],
+          }],
+        },
+        config: { maxComparisonProtocolReferencesPerFinding: 1 },
+        pattern: /comparison protocol references exceed configured maximum/,
+      },
+      {
+        name: 'duplicate comparison references',
+        record: {
+          ...linkedRecord,
+          syntheses: [{
+            ...linkedSynthesis,
+            findings: [{ ...finding, comparisonProtocolIds: [protocol.id, protocol.id] }],
+          }],
+        },
+        pattern: /comparison protocol ids.*duplicates/,
+      },
+      {
+        name: 'missing comparison reference',
+        record: {
+          ...linkedRecord,
+          syntheses: [{
+            ...linkedSynthesis,
+            findings: [{
+              ...finding,
+              comparisonProtocolIds: [ResearchComparisonProtocolId('missing')],
+            }],
+          }],
+        },
+        pattern: /references a missing or later comparison protocol/,
+      },
+      {
+        name: 'comparison reference on source summary',
+        record: {
+          ...linkedRecord,
+          syntheses: [{
+            ...linkedSynthesis,
+            findings: [{ ...finding, kind: 'source-summary' }],
+          }],
+        },
+        pattern: /uses a comparison protocol but is not an inference/,
+      },
+      {
+        name: 'comparison protocol superseded before synthesis',
+        record: {
+          ...linkedRecord,
+          comparisonProtocols: [...linkedRecord.comparisonProtocols, successorProtocol],
+        },
+        pattern: /comparison protocol.*superseded before synthesis creation/,
+      },
+      {
+        name: 'comparison observation superseded before synthesis',
+        record: {
+          ...linkedRecord,
+          observations: [...linkedRecord.observations, successorObservation],
+        },
+        pattern: /synthesis.*observation.*superseded before synthesis creation/,
+      },
+      {
+        name: 'comparison result claim omitted',
+        record: {
+          ...linkedRecord,
+          syntheses: [{
+            ...linkedSynthesis,
+            findings: [{ ...finding, claimIds: [state.foundation.claims.a.result] }],
+          }],
+        },
+        pattern: /comparison protocol.*result claim.*is not referenced/,
+      },
+    ]
+
+    for (const scenario of scenarios) {
+      let message: string | undefined
+      try {
+        await mount({
+          pool: poolWithQuestions([[String(scenario.record.id), scenario.record]]),
+          ...(scenario.config === undefined ? {} : { config: scenario.config }),
+        })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+      if (message === undefined) throw new Error(`${scenario.name} unexpectedly mounted`)
+      expect(message, scenario.name).toMatch(scenario.pattern)
+    }
   })
 
   it('rejects malformed aggregate relationships and configured stored capacities', async () => {
@@ -3818,19 +4332,26 @@ describe('ResearchInformation durability and stored-state validation', () => {
 
   it('fails loud on a mismatching domain version and invalid direct configuration', async () => {
     const mismatch = poolWithQuestions()
-    mismatch.versions.set('research_information', 3)
+    mismatch.versions.set('research_information', 4)
     await expect(mount({ pool: mismatch })).rejects.toMatchObject({ code: 'version-mismatch' })
 
     const oldRecord = poolWithQuestions()
+    oldRecord.versions.set('research_information', 5)
+    const versionFourSource = storedQuestion()
     const {
-      entities: _entities,
-      observations: _observations,
-      comparisonProtocols: _comparisonProtocols,
-      ...versionThreeRecord
-    } = storedQuestion()
+      comparisonProtocolIds: _comparisonProtocolIds,
+      ...versionFourFinding
+    } = versionFourSource.syntheses[0]!.findings[0]!
+    const versionFourRecord = {
+      ...versionFourSource,
+      syntheses: [{
+        ...versionFourSource.syntheses[0]!,
+        findings: [versionFourFinding],
+      }],
+    }
     oldRecord.media.set('research_information', {
       global: null,
-      tables: new Map([['questions', new Map([['question-a', versionThreeRecord]])]]),
+      tables: new Map([['questions', new Map([['question-a', versionFourRecord]])]]),
     })
     await expect(mount({ pool: oldRecord })).rejects.toMatchObject({ code: 'invalid-record' })
 
@@ -3839,6 +4360,9 @@ describe('ResearchInformation durability and stored-state validation', () => {
       .toThrow(/positive safe integer/)
     expect(() => new ResearchInformation(new Context(), { maxObservationReferencesPerProtocol: 1 }))
       .toThrow(/safe integer at least 2/)
+    expect(() => new ResearchInformation(new Context(), {
+      maxComparisonProtocolReferencesPerFinding: 0,
+    })).toThrow(/positive safe integer/)
     const notStarted = new ResearchInformation(new Context())
     expect(() => notStarted.list()).toThrow(/not started yet/)
   })

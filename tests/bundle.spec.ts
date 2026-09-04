@@ -70,7 +70,7 @@ describe('standalone research bundle', () => {
     expect(rows[0]?.config).toEqual({ parserProvider: 'pdfjs' })
   })
 
-  it('ships the v0.2 tools through the committed built entry points', () => {
+  it('ships the v0.3 tools through the committed built entry points', () => {
     const documentTools = readFileSync(
       resolve(root, 'lib/tool-research-document/index.js'),
       'utf8',
@@ -79,9 +79,16 @@ describe('standalone research bundle', () => {
       resolve(root, 'lib/tool-research-information/index.js'),
       'utf8',
     )
+    const reviewRenderer = readFileSync(
+      resolve(root, 'lib/tool-research-information/review-render.js'),
+      'utf8',
+    )
 
     expect(documentTools).toContain("name: 'paper_reading_pack'")
     expect(informationTools).toContain("name: 'research_review_render'")
     expect(informationTools).toContain('render_digest')
+    expect(informationTools).toContain('comparison_protocol_ids')
+    expect(informationTools).toContain('stale_synthesis_comparison_references')
+    expect(reviewRenderer).toContain('Comparison basis:')
   })
 })

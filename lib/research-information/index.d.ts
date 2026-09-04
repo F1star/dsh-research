@@ -122,7 +122,9 @@ export declare const DEFAULT_MAX_FINDINGS_PER_SYNTHESIS = 256;
 /** Default maximum evidence links on one claim. */
 export declare const DEFAULT_MAX_EVIDENCE_LINKS_PER_CLAIM = 64;
 /** Default maximum claim references on one finding. */
-export declare const DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING = 64;
+export declare const DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING = 256;
+/** Default maximum comparison-protocol references on one finding. */
+export declare const DEFAULT_MAX_COMPARISON_PROTOCOL_REFERENCES_PER_FINDING = 64;
 /** Default maximum reading notes per question. */
 export declare const DEFAULT_MAX_READING_NOTES_PER_QUESTION = 10000;
 /** Default maximum normalized entities per question. */
@@ -159,8 +161,10 @@ export interface Config {
     readonly maxFindingsPerSynthesis?: number;
     /** Maximum evidence relations on one claim. Defaults to 64. */
     readonly maxEvidenceLinksPerClaim?: number;
-    /** Maximum claim references on one finding. Defaults to 64. */
+    /** Maximum claim references on one finding. Defaults to 256. */
     readonly maxClaimReferencesPerFinding?: number;
+    /** Maximum comparison-protocol references on one finding. Defaults to 64. */
+    readonly maxComparisonProtocolReferencesPerFinding?: number;
     /** Maximum immutable reading notes per question. Defaults to 10000. */
     readonly maxReadingNotesPerQuestion?: number;
     /** Maximum immutable normalized entities per question. Defaults to 10000. */
@@ -251,8 +255,8 @@ export declare class ResearchInformation extends Service {
      */
     writeComparisonProtocol(request: WriteResearchComparisonProtocolRequest): Promise<WriteResearchComparisonProtocolResult>;
     /**
-     * Append an immutable synthesis whose findings cite active claims.
-     * @param request - Structured findings, authorship, and aggregate revision.
+     * Append an immutable synthesis whose findings cite active claims and explicit comparison bases.
+     * @param request - Structured findings, optional comparison protocols, authorship, and revision.
      * @returns the committed aggregate or an explicit non-writing failure.
      * @throws Synchronously when findings or their text are empty or the revision is invalid.
      */

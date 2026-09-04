@@ -115,6 +115,8 @@ export interface ResearchFinding {
   readonly text: string
   /** Active claims used by this finding; source summaries require evidence-backed source statements. */
   readonly claimIds: readonly ResearchClaimId[]
+  /** Active, non-stale authored protocols used as the comparison basis for an inference. */
+  readonly comparisonProtocolIds: readonly ResearchComparisonProtocolId[]
 }
 
 /** Immutable cross-paper synthesis over claims from one research question. */
@@ -356,6 +358,8 @@ export interface ResearchFindingInput {
   readonly stance: ResearchFindingStance
   readonly text: string
   readonly claimIds: readonly ResearchClaimId[]
+  /** Authored comparison bases used by an inference; omitted when the finding makes no comparison. */
+  readonly comparisonProtocolIds?: readonly ResearchComparisonProtocolId[]
 }
 
 /** Append one immutable synthesis and optionally supersede an active synthesis. */
@@ -428,6 +432,7 @@ export type ResearchInformationCapacity =
   | 'findings'
   | 'evidence-links'
   | 'claim-references'
+  | 'comparison-protocol-references'
   | 'reading-notes'
   | 'entities'
   | 'entity-claim-references'
@@ -511,6 +516,27 @@ export type ResearchSynthesisReferenceFailure =
   | {
     readonly status: 'source-summary-claim-kind-mismatch'
     readonly findingIndex: number
+    readonly claimId: ResearchClaimId
+  }
+  | {
+    readonly status: 'comparison-protocol-not-found'
+    readonly findingIndex: number
+    readonly comparisonProtocolId: ResearchComparisonProtocolId
+  }
+  | {
+    readonly status: 'comparison-protocol-inactive' | 'comparison-protocol-stale'
+    readonly findingIndex: number
+    readonly comparisonProtocolId: ResearchComparisonProtocolId
+  }
+  | {
+    readonly status: 'comparison-protocol-finding-kind-mismatch'
+    readonly findingIndex: number
+    readonly comparisonProtocolId: ResearchComparisonProtocolId
+  }
+  | {
+    readonly status: 'comparison-protocol-result-claim-missing'
+    readonly findingIndex: number
+    readonly comparisonProtocolId: ResearchComparisonProtocolId
     readonly claimId: ResearchClaimId
   }
   | { readonly status: 'supersedes-synthesis-not-found'; readonly synthesisId: ResearchSynthesisId }

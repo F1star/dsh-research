@@ -12,7 +12,7 @@
 |---|---|
 | 论文阅读 | `paper_import`、`paper_reading_pack`、`paper_outline`、`paper_search` 和 `paper_read` 用于导入本地 PDF、从可识别的关键章节收集有界原文片段、浏览结构、进行词法检索，并恢复带物理页索引、解析器版本和引文哈希锚点的精确上下文 block。 |
 | 论文库 | `paper_library_register`、`paper_library_list`、`paper_library_get` 和 `paper_library_alias` 在 profile storage 中保留论文身份、书目信息 provenance、精确来源版本、解析器 observation 和可撤销 alias。 |
-| 科研信息整合 | 科研问题、证据、笔记、claim、entity、observation、comparison protocol、synthesis、matrix、audit 和 `research_review_render` 操作可构建跨论文可追溯记录，并将明确选定的 active synthesis 渲染成可继续编辑的 Markdown，同时避免把作者解释表述成来源原文。 |
+| 科研信息整合 | 科研问题、证据、笔记、claim、entity、observation、comparison protocol、synthesis、matrix、audit 和 `research_review_render` 操作可构建跨论文可追溯记录。Synthesis inference 可以保留明确的 comparison protocol，renderer 会在可继续编辑的 Markdown 中呈现该 comparison basis，同时避免把作者解释表述成来源原文。 |
 
 这个独立 bundle 会在所选 profile 中同时挂载科研服务和面向模型的工具 Consumer。安装该 bundle 会明确向通过这个 profile 启动的每个 agent 授权：每个 agent 都可以看到科研工具 schema 及其稳定的 prompt 指导。
 
@@ -49,19 +49,19 @@ dsh plugin --profile web add github:F1star/dsh-research#<tag-or-commit>
 2. 使用 `paper_library_register` 注册当前保留的文档。将返回的论文、来源版本、文档、block、解析器版本、物理页索引和引文哈希标识随笔记一同保留。
 3. 创建科研问题，捕获精确证据，并记录阅读笔记或段落问题。将来源陈述与明确的推断分别记录。
 4. 比较数值结果时，分别归一化每篇论文的方法、数据集、指标、数值、单位、数据划分、不确定性、评估协议和条件。只有保留字段兼容时，才记录明确的比较协议。
-5. 使用 matrix 和 audit view 查找缺失或过期的支持，再撰写引用有效来源 claim 的结构化 synthesis finding。将明确的 active synthesis id 传给 `research_review_render`，得到带证据清单和书目清单的分页 Markdown。
+5. 使用 matrix 和 audit view 查找缺失或过期的支持，再撰写引用有效来源 claim 的结构化 synthesis finding。每个持久 finding 都会存储必需的服务字段 `comparisonProtocolIds`；`research_synthesis_write` 将其公开为可选输入 `comparison_protocol_ids`，省略该输入时会记录空数组。Source summary 不能关联 protocol。非空数组只能用于 inference，只能包含 active、non-stale protocol，并且 `claim_ids` 必须包含每个关联 protocol 中所有 observation 的 `resultClaimId`。将明确的 active synthesis id 传给 `research_review_render`，得到带 comparison basis、证据清单和书目清单的分页 Markdown。
 
 你可以用自然语言描述任务，由 agent 选择工具。例如：
 
 ```text
-导入 papers/one.pdf，并为摘要、引言、方法、结果、局限和结论构建 reading pack。对导读包遗漏的内容使用 outline 和 search 工具补充查找，并在依赖相关内容前阅读周围 block。注册这篇论文，创建一个关于数据集影响的科研问题，为每条来源陈述捕获精确证据，展示 audit view，撰写 synthesis，再把该 synthesis 渲染成研究综述草稿。
+导入 papers/one.pdf，并为摘要、引言、方法、结果、局限和结论构建 reading pack。对导读包遗漏的内容使用 outline 和 search 工具补充查找，并在依赖相关内容前阅读周围 block。注册这篇论文，创建一个关于数据集影响的科研问题，为每条来源陈述捕获精确证据，对报告结果进行归一化，只在结果兼容时记录 comparison protocol，从 synthesis inference 关联该 protocol，再把 synthesis 渲染成研究综述草稿。
 ```
 
-`paper_reading_pack` 识别一组封闭的中英文章节标签，并在配置的文本预算内返回保留独立锚点的来源 block，同时通过 `text_truncated` 明确标记截断；它不会总结这些 block，`missing_roles` 只表示解析器没有识别出匹配标签。`research_review_render` 同样不会撰写新 finding：它只渲染一个明确选定的 active synthesis，并标注来源摘要、推断、证据关系、当前复核状态和不完整的书目信息。精确 selection 文本必须通过 `include_selected_quotes` 显式开启；续页必须复用第一页的 `render_digest`，从而避免把已变化的记录静默拼接到旧页面。`ready-with-warnings` 结果在发布前仍需人工检查。
+`paper_reading_pack` 识别一组封闭的中英文章节标签，并在配置的文本预算内返回保留独立锚点的来源 block，同时通过 `text_truncated` 明确标记截断；它不会总结这些 block，`missing_roles` 只表示解析器没有识别出匹配标签。`research_review_render` 同样不会撰写新 finding：它只渲染一个明确选定的 active synthesis，并标注来源摘要、推断、证据关系、当前复核状态和不完整的书目信息。关联了 protocol 的 inference 还会获得一个来自持久 comparison protocol 的 `Comparison basis`；这一作者给出的兼容性决策不能证明统计显著性，也不会把 inference 变成来源原文。精确 selection 文本必须通过 `include_selected_quotes` 显式开启；续页必须复用第一页的 `render_digest`，从而避免把已变化的记录静默拼接到旧页面。`ready-with-warnings` 结果在发布前仍需人工检查。
 
 ## 配置
 
-bundle 行位于 [`cordis.patch.yml`](cordis.patch.yml)，各插件的默认值由其配置 schema 提供。profile 自己的 `cordis.patch.yml` 会在其后应用，并可按 `id` 覆盖行。覆盖行时会替换完整的 `config` 值，而不是合并单个键，因此覆盖 `f1star-research-document` 时应保留 `parserProvider: pdfjs`，除非有意选择另一个已注册解析器。`f1star-tool-research-document` 的 reading-pack 默认每节返回 12 个 block、每节最多 14 个 block、一次最多请求 7 节；`defaultReadingPackBlocksPerSection` 不得超过 `maxReadingPackBlocksPerSection`，且 `maxOutputTextChars` 不得小于 `maxReadingPackSections × maxReadingPackBlocksPerSection`。该文本预算只覆盖可变来源字段；固定的 provenance 锚点与提示是额外的有界输出。`f1star-tool-research-information.maxReviewTextChars` 默认最多允许完整 review 使用 2,000,000 个 UTF-16 code unit，并会在分页前超限时明确失败。
+bundle 行位于 [`cordis.patch.yml`](cordis.patch.yml)，各插件的默认值由其配置 schema 提供。profile 自己的 `cordis.patch.yml` 会在其后应用，并可按 `id` 覆盖行。覆盖行时会替换完整的 `config` 值，而不是合并单个键，因此覆盖 `f1star-research-document` 时应保留 `parserProvider: pdfjs`，除非有意选择另一个已注册解析器。`f1star-tool-research-document` 的 reading-pack 默认每节返回 12 个 block、每节最多 14 个 block、一次最多请求 7 节；`defaultReadingPackBlocksPerSection` 不得超过 `maxReadingPackBlocksPerSection`，且 `maxOutputTextChars` 不得小于 `maxReadingPackSections × maxReadingPackBlocksPerSection`。该文本预算只覆盖可变来源字段；固定的 provenance 锚点与提示是额外的有界输出。`f1star-research-information.maxClaimReferencesPerFinding` 默认为 256，因此一个达到默认 observation 上限的 comparison protocol 仍可保留全部 result claim；组合多个 protocol 的 finding 仍可能触及这一明确上限，此时应拆分 finding 或有意调整配置。`maxComparisonProtocolReferencesPerFinding` 默认为 64。`f1star-tool-research-information.maxReviewTextChars` 默认最多允许完整 review 使用 2,000,000 个 UTF-16 code unit，并会在分页前超限时明确失败。
 
 自定义 profile 应按以下顺序组合 bundle：
 
@@ -79,8 +79,12 @@ bundle 行位于 [`cordis.patch.yml`](cordis.patch.yml)，各插件的默认值�
 - PDF.js 只提取原生文本。扫描版或纯图片文档需要在本 bundle 之外进行 OCR；本次导入不能支持文本 claim。
 - Reading pack 的识别依赖提取出的章节标签和近似阅读顺序。角色未匹配不表示论文缺少相应主题。
 - 检索与论文库匹配均为词法操作。本 bundle 不提供语义检索、远程 DOI 或 arXiv 验证、自动 claim 聚类或自动 entity resolution。
-- 数值 observation 和 comparison protocol 是作者给出的归一化。本 bundle 不会暗中转换单位或 alias，也不会对结果排序、计算差值、推断统计显著性或执行 meta-analysis。
+- 数值 observation 和 comparison protocol 是作者给出的归一化。将 protocol 关联到 synthesis inference 会记录其明确的 comparison basis；本 bundle 仍不会暗中转换单位或 alias，也不会对结果排序、计算差值、推断统计显著性或执行 meta-analysis。
 - Review render 是对已保留记录的确定性 Markdown 投影，不是自动生成完整文献综述，也不是正式的 CSL/BibTeX 引用导出器。它始终输出精确 selection 哈希与偏移，仅在显式请求时披露选中文本，否则输出 locator 而不重复完整证据 block。
+
+## 从 0.2 升级
+
+0.3 将 `research_information` 持久 domain 从版本 4 提升到版本 5，因为每个 synthesis finding 现在都会存储一个必需的 comparison-protocol reference 数组。版本 4 数据不会自动迁移到版本 5。更新前请备份所选 profile 的 storage。如果其中已有版本 4 的科研信息数据，0.3 会因版本不匹配而拒绝打开该 domain，并保持原数据不变；将 bundle 固定回 `v0.2.0` 后即可再次访问这些数据。版本 1 的论文库 domain 不受影响。
 
 ## 更新或移除
 

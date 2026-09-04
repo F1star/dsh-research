@@ -281,7 +281,9 @@ export const DEFAULT_MAX_FINDINGS_PER_SYNTHESIS = 256
 /** Default maximum evidence links on one claim. */
 export const DEFAULT_MAX_EVIDENCE_LINKS_PER_CLAIM = 64
 /** Default maximum claim references on one finding. */
-export const DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING = 64
+export const DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING = 256
+/** Default maximum comparison-protocol references on one finding. */
+export const DEFAULT_MAX_COMPARISON_PROTOCOL_REFERENCES_PER_FINDING = 64
 /** Default maximum reading notes per question. */
 export const DEFAULT_MAX_READING_NOTES_PER_QUESTION = 10_000
 /** Default maximum normalized entities per question. */
@@ -319,8 +321,10 @@ export interface Config {
   readonly maxFindingsPerSynthesis?: number
   /** Maximum evidence relations on one claim. Defaults to 64. */
   readonly maxEvidenceLinksPerClaim?: number
-  /** Maximum claim references on one finding. Defaults to 64. */
+  /** Maximum claim references on one finding. Defaults to 256. */
   readonly maxClaimReferencesPerFinding?: number
+  /** Maximum comparison-protocol references on one finding. Defaults to 64. */
+  readonly maxComparisonProtocolReferencesPerFinding?: number
   /** Maximum immutable reading notes per question. Defaults to 10000. */
   readonly maxReadingNotesPerQuestion?: number
   /** Maximum immutable normalized entities per question. Defaults to 10000. */
@@ -353,6 +357,7 @@ interface ResolvedConfig {
   readonly maxFindingsPerSynthesis: number
   readonly maxEvidenceLinksPerClaim: number
   readonly maxClaimReferencesPerFinding: number
+  readonly maxComparisonProtocolReferencesPerFinding: number
   readonly maxReadingNotesPerQuestion: number
   readonly maxEntitiesPerQuestion: number
   readonly maxClaimReferencesPerEntity: number
@@ -372,6 +377,12 @@ type NormalizedEntityWrite = Omit<WriteResearchEntityRequest, 'supersedes'> & {
 }
 type NormalizedComparisonProtocolWrite = Omit<WriteResearchComparisonProtocolRequest, 'observationIds'> & {
   readonly observationIds: readonly ResearchObservationId[]
+}
+type NormalizedFindingInput = Omit<ResearchFindingInput, 'comparisonProtocolIds'> & {
+  readonly comparisonProtocolIds: readonly ResearchComparisonProtocolId[]
+}
+type NormalizedSynthesisWrite = Omit<WriteResearchSynthesisRequest, 'findings'> & {
+  readonly findings: readonly NormalizedFindingInput[]
 }
 type CapacityFailure = {
   readonly status: 'capacity'
@@ -411,6 +422,8 @@ export class ResearchInformation extends Service {
     maxEvidenceLinksPerClaim: z.number().step(1).min(1).default(DEFAULT_MAX_EVIDENCE_LINKS_PER_CLAIM),
     maxClaimReferencesPerFinding: z.number().step(1).min(1)
       .default(DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING),
+    maxComparisonProtocolReferencesPerFinding: z.number().step(1).min(1)
+      .default(DEFAULT_MAX_COMPARISON_PROTOCOL_REFERENCES_PER_FINDING),
     maxReadingNotesPerQuestion: z.number().step(1).min(1)
       .default(DEFAULT_MAX_READING_NOTES_PER_QUESTION),
     maxEntitiesPerQuestion: z.number().step(1).min(1)
@@ -463,6 +476,11 @@ export class ResearchInformation extends Service {
       maxClaimReferencesPerFinding: positiveSafeInteger(
         'maxClaimReferencesPerFinding',
         config.maxClaimReferencesPerFinding ?? DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING,
+      ),
+      maxComparisonProtocolReferencesPerFinding: positiveSafeInteger(
+        'maxComparisonProtocolReferencesPerFinding',
+        config.maxComparisonProtocolReferencesPerFinding
+          ?? DEFAULT_MAX_COMPARISON_PROTOCOL_REFERENCES_PER_FINDING,
       ),
       maxReadingNotesPerQuestion: positiveSafeInteger(
         'maxReadingNotesPerQuestion',
@@ -596,8 +614,8 @@ export class ResearchInformation extends Service {
   }
 
   /**
-   * Append an immutable synthesis whose findings cite active claims.
-   * @param request - Structured findings, authorship, and aggregate revision.
+   * Append an immutable synthesis whose findings cite active claims and explicit comparison bases.
+   * @param request - Structured findings, optional comparison protocols, authorship, and revision.
    * @returns the committed aggregate or an explicit non-writing failure.
    * @throws Synchronously when findings or their text are empty or the revision is invalid.
    */
@@ -1135,7 +1153,7 @@ export class ResearchInformation extends Service {
   }
 
   private async writeSynthesisNow(
-    request: WriteResearchSynthesisRequest,
+    request: NormalizedSynthesisWrite,
   ): Promise<WriteResearchSynthesisResult> {
     const table = this.requireTable()
     if (request.findings.length > this.config.maxFindingsPerSynthesis) {
@@ -1145,6 +1163,12 @@ export class ResearchInformation extends Service {
       finding => finding.claimIds.length > this.config.maxClaimReferencesPerFinding,
     )) {
       return { status: 'capacity', resource: 'claim-references' }
+    }
+    if (request.findings.some(
+      finding => finding.comparisonProtocolIds.length
+        > this.config.maxComparisonProtocolReferencesPerFinding,
+    )) {
+      return { status: 'capacity', resource: 'comparison-protocol-references' }
     }
     const inputCapacity = this.fieldCapacity([
       ...request.findings.map(finding => finding.text),
@@ -1159,6 +1183,10 @@ export class ResearchInformation extends Service {
       return { status: 'capacity', resource: 'syntheses' }
     }
     const claimsById = new Map(current.claims.map(value => [value.id, value]))
+    const comparisonProtocolsById = new Map(
+      current.comparisonProtocols.map(value => [value.id, value]),
+    )
+    const observationsById = new Map(current.observations.map(value => [value.id, value]))
     for (const [findingIndex, finding] of request.findings.entries()) {
       for (const claimId of finding.claimIds) {
         const claim = claimsById.get(claimId)
@@ -1174,6 +1202,38 @@ export class ResearchInformation extends Service {
           return claim !== undefined && claim.evidenceLinks.length > 0
         })
         if (!cited) return { status: 'source-summary-uncited', findingIndex }
+      }
+      for (const comparisonProtocolId of finding.comparisonProtocolIds) {
+        const protocol = comparisonProtocolsById.get(comparisonProtocolId)
+        if (protocol === undefined) {
+          return { status: 'comparison-protocol-not-found', findingIndex, comparisonProtocolId }
+        }
+        if (!isActiveComparisonProtocol(current, comparisonProtocolId)) {
+          return { status: 'comparison-protocol-inactive', findingIndex, comparisonProtocolId }
+        }
+        if (isComparisonProtocolStale(current, protocol)) {
+          return { status: 'comparison-protocol-stale', findingIndex, comparisonProtocolId }
+        }
+        if (finding.kind !== 'inference') {
+          return {
+            status: 'comparison-protocol-finding-kind-mismatch',
+            findingIndex,
+            comparisonProtocolId,
+          }
+        }
+        for (const observationId of protocol.observationIds) {
+          /* v8 ignore next -- valid comparison protocols always retain their observations. */
+          const observation = observationsById.get(observationId)
+          if (observation === undefined) continue
+          if (!finding.claimIds.includes(observation.resultClaimId)) {
+            return {
+              status: 'comparison-protocol-result-claim-missing',
+              findingIndex,
+              comparisonProtocolId,
+              claimId: observation.resultClaimId,
+            }
+          }
+        }
       }
     }
     if (request.supersedes !== undefined) {
@@ -1438,7 +1498,7 @@ export class ResearchInformation extends Service {
 
   private normalizeSynthesisRequest(
     request: WriteResearchSynthesisRequest,
-  ): WriteResearchSynthesisRequest {
+  ): NormalizedSynthesisWrite {
     if (request.findings.length === 0) throw new Error('research-information synthesis requires a finding')
     return {
       ...request,
@@ -1448,12 +1508,14 @@ export class ResearchInformation extends Service {
     }
   }
 
-  private normalizeFinding(finding: ResearchFindingInput, index: number): ResearchFindingInput {
+  private normalizeFinding(finding: ResearchFindingInput, index: number): NormalizedFindingInput {
     const claimIds = [...new Set(finding.claimIds)]
+    const comparisonProtocolIds = [...new Set(finding.comparisonProtocolIds ?? [])]
     return {
       ...finding,
       text: this.normalizeText(`finding ${index} text`, finding.text),
       claimIds,
+      comparisonProtocolIds,
     }
   }
 
@@ -2002,6 +2064,7 @@ export class ResearchInformation extends Service {
           throw inconsistent(`comparison protocol '${protocol.id}' references a missing or later observation`)
         }
         this.assertObservationActiveAtCreation(
+          'comparison protocol',
           protocol.id,
           observation.id,
           protocolTimestamp,
@@ -2009,7 +2072,8 @@ export class ResearchInformation extends Service {
         )
         this.assertObservationFreshAtCreation(
           record,
-          protocol,
+          'comparison protocol',
+          protocol.id,
           observation,
           protocolTimestamp,
           supersedingClaimsById,
@@ -2063,7 +2127,17 @@ export class ResearchInformation extends Service {
         if (finding.claimIds.length > this.config.maxClaimReferencesPerFinding) {
           throw inconsistent(`finding '${finding.id}' claim references exceed configured maximum`)
         }
+        if (finding.comparisonProtocolIds.length
+          > this.config.maxComparisonProtocolReferencesPerFinding) {
+          throw inconsistent(
+            `finding '${finding.id}' comparison protocol references exceed configured maximum`,
+          )
+        }
         this.assertUnique(`finding '${finding.id}' claim ids`, finding.claimIds)
+        this.assertUnique(
+          `finding '${finding.id}' comparison protocol ids`,
+          finding.comparisonProtocolIds,
+        )
         for (const claimId of finding.claimIds) {
           const claim = claimsById.get(claimId)
           if (claim === undefined || Date.parse(claim.createdAt) > synthesisTimestamp) {
@@ -2084,6 +2158,55 @@ export class ResearchInformation extends Service {
           })
           if (!sourceBacked) {
             throw inconsistent(`source-summary finding '${finding.id}' lacks source-statement evidence`)
+          }
+        }
+        for (const comparisonProtocolId of finding.comparisonProtocolIds) {
+          const protocol = record.comparisonProtocols.find(
+            value => value.id === comparisonProtocolId,
+          )
+          if (protocol === undefined || Date.parse(protocol.createdAt) > synthesisTimestamp) {
+            throw inconsistent(
+              `finding '${finding.id}' references a missing or later comparison protocol '${comparisonProtocolId}'`,
+            )
+          }
+          if (finding.kind !== 'inference') {
+            throw inconsistent(
+              `finding '${finding.id}' uses a comparison protocol but is not an inference`,
+            )
+          }
+          const successor = record.comparisonProtocols.find(
+            value => value.supersedes === comparisonProtocolId,
+          )
+          if (successor !== undefined && Date.parse(successor.createdAt) < synthesisTimestamp) {
+            throw inconsistent(
+              `synthesis '${synthesis.id}' references comparison protocol '${comparisonProtocolId}' superseded before synthesis creation`,
+            )
+          }
+          for (const observationId of protocol.observationIds) {
+            const observation = observationsById.get(observationId)
+            /* v8 ignore next -- the comparison-protocol pass validates observation existence. */
+            if (observation === undefined) continue
+            this.assertObservationActiveAtCreation(
+              'synthesis',
+              synthesis.id,
+              observation.id,
+              synthesisTimestamp,
+              supersedingObservationsById.get(observation.id),
+            )
+            this.assertObservationFreshAtCreation(
+              record,
+              'synthesis',
+              synthesis.id,
+              observation,
+              synthesisTimestamp,
+              supersedingClaimsById,
+              supersedingEntitiesById,
+            )
+            if (!finding.claimIds.includes(observation.resultClaimId)) {
+              throw inconsistent(
+                `finding '${finding.id}' comparison protocol '${protocol.id}' result claim '${observation.resultClaimId}' is not referenced`,
+              )
+            }
           }
         }
       }
@@ -2217,54 +2340,56 @@ export class ResearchInformation extends Service {
   }
 
   private assertObservationActiveAtCreation(
-    protocolId: ResearchComparisonProtocolId,
+    owner: 'comparison protocol' | 'synthesis',
+    ownerId: ResearchComparisonProtocolId | ResearchSynthesisId,
     observationId: ResearchObservationId,
-    protocolTimestamp: number,
+    ownerTimestamp: number,
     successor: ResearchObservation | undefined,
   ): void {
-    if (successor !== undefined && Date.parse(successor.createdAt) < protocolTimestamp) {
+    if (successor !== undefined && Date.parse(successor.createdAt) < ownerTimestamp) {
       throw inconsistent(
-        `comparison protocol '${protocolId}' references observation '${observationId}' superseded before protocol creation`,
+        `${owner} '${ownerId}' references observation '${observationId}' superseded before ${owner} creation`,
       )
     }
   }
 
   private assertObservationFreshAtCreation(
     record: ResearchQuestionRecord,
-    protocol: ResearchComparisonProtocol,
+    owner: 'comparison protocol' | 'synthesis',
+    ownerId: ResearchComparisonProtocolId | ResearchSynthesisId,
     observation: ResearchObservation,
-    protocolTimestamp: number,
+    ownerTimestamp: number,
     supersedingClaimsById: ReadonlyMap<ResearchClaimId, ResearchClaim>,
     supersedingEntitiesById: ReadonlyMap<ResearchEntityId, ResearchEntity>,
   ): void {
     const claimIds = observationClaimIds(observation)
     for (const claimId of claimIds) {
       this.assertClaimActiveAtCreation(
-        'comparison protocol',
-        protocol.id,
+        owner,
+        ownerId,
         claimId,
-        protocolTimestamp,
+        ownerTimestamp,
         supersedingClaimsById.get(claimId),
       )
     }
     for (const entityId of observationEntityIds(observation)) {
       const successor = supersedingEntitiesById.get(entityId)
-      if (successor !== undefined && Date.parse(successor.createdAt) < protocolTimestamp) {
+      if (successor !== undefined && Date.parse(successor.createdAt) < ownerTimestamp) {
         throw inconsistent(
-          `comparison protocol '${protocol.id}' references observation '${observation.id}' with a superseded entity`,
+          `${owner} '${ownerId}' references observation '${observation.id}' with an entity superseded before ${owner} creation`,
         )
       }
       const entity = record.entities.find(value => value.id === entityId)
       /* v8 ignore next -- every observation entity reference is validated earlier in the same aggregate pass. */
       if (entity === undefined) {
-        throw inconsistent(`comparison protocol '${protocol.id}' observation lacks entity '${entityId}'`)
+        throw inconsistent(`${owner} '${ownerId}' observation lacks entity '${entityId}'`)
       }
       for (const claimId of entity.sourceClaimIds) {
         this.assertClaimActiveAtCreation(
-          'comparison protocol',
-          protocol.id,
+          owner,
+          ownerId,
           claimId,
-          protocolTimestamp,
+          ownerTimestamp,
           supersedingClaimsById.get(claimId),
         )
       }
@@ -2480,6 +2605,18 @@ function isObservationStale(record: ResearchQuestionRecord, observation: Researc
     return entity === undefined
       || !isActiveEntity(record, entityId)
       || entity.sourceClaimIds.some(claimId => !isActiveClaim(record, claimId))
+  })
+}
+
+function isComparisonProtocolStale(
+  record: ResearchQuestionRecord,
+  protocol: ResearchComparisonProtocol,
+): boolean {
+  return protocol.observationIds.some((observationId) => {
+    const observation = record.observations.find(value => value.id === observationId)
+    return observation === undefined
+      || !isActiveObservation(record, observationId)
+      || isObservationStale(record, observation)
   })
 }
 

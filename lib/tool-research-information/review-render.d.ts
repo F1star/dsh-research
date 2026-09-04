@@ -7,7 +7,7 @@ import type { ResearchPaperId, ResearchPaperRecord } from '../research-library/i
 /** Current ability to verify durable evidence against an imported document. */
 export type ResearchReviewEvidenceCoverage = 'readable' | 'needs-ocr' | 'reimport-required' | 'parser-mismatch' | 'locator-mismatch';
 /** Stable warning codes emitted by the review renderer. */
-export declare const RESEARCH_REVIEW_WARNING_CODES: readonly ["question-not-found", "synthesis-not-found", "synthesis-inactive", "stale-claim-reference", "claim-not-found", "evidence-not-found", "source-summary-without-supporting-evidence", "uncited-inference-finding", "paper-not-found", "bibliography-incomplete", "evidence-not-currently-readable", "review-too-large"];
+export declare const RESEARCH_REVIEW_WARNING_CODES: readonly ["question-not-found", "synthesis-not-found", "synthesis-inactive", "stale-claim-reference", "claim-not-found", "evidence-not-found", "comparison-protocol-not-found", "comparison-protocol-inactive", "comparison-protocol-stale", "observation-not-found", "source-summary-without-supporting-evidence", "uncited-inference-finding", "paper-not-found", "bibliography-incomplete", "evidence-not-currently-readable", "review-too-large"];
 /** One actionable limitation of a rendered review. */
 export interface ResearchReviewWarning {
     readonly code: typeof RESEARCH_REVIEW_WARNING_CODES[number];
@@ -16,6 +16,8 @@ export interface ResearchReviewWarning {
     readonly claimId?: string;
     readonly evidenceId?: string;
     readonly paperId?: string;
+    readonly comparisonProtocolId?: string;
+    readonly observationId?: string;
 }
 /** Read-only dependencies owned by the mounted research services. */
 export interface ResearchReviewRenderDependencies {

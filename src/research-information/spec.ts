@@ -141,6 +141,7 @@ const finding: z.ZodType<ResearchFinding> = z.object({
   stance: z.enum(['agreement', 'conflict', 'qualification', 'open-question']),
   text: z.string(),
   claimIds: z.array(claimId),
+  comparisonProtocolIds: z.array(comparisonProtocolId),
 })
 
 const synthesis: z.ZodType<ResearchSynthesis> = z.object({
@@ -281,10 +282,10 @@ export const researchQuestionRecord: z.ZodType<ResearchQuestionRecord> = z.objec
   updatedAt: instant,
 })
 
-/** Version-four aggregate store for normalized observations and explicit comparison protocols. */
+/** Version-five aggregate store whose synthesis findings explicitly retain comparison protocols. */
 export const researchInformationDomainSpec = defineDomain({
   name: 'research_information',
-  version: 4,
+  version: 5,
   tables: {
     questions: domainTable<ResearchQuestionId, ResearchQuestionRecord>(researchQuestionRecord),
   },

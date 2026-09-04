@@ -221,6 +221,9 @@ describe('research-information tool composition', () => {
     expect(prompt).toContain('a candidate is not a compatibility decision')
     expect(prompt).toContain('Never convert units or aliases, average, calculate a delta, rank results, or infer statistical significance from raw observations or candidates')
     expect(prompt).toContain('statistical significance remains unassessed')
+    expect(prompt).toContain('pass its active, non-stale authored protocol in comparison_protocol_ids')
+    expect(prompt).toContain('include every member observation result claim in claim_ids')
+    expect(prompt).toContain('The deterministic review expands each referenced protocol')
     expect(prompt).toContain('missing matrix cell means no captured source statement')
     expect(prompt).toContain('Item and reference paging is deterministic')
     expect(prompt).toContain('Use not-applicable only as a positive authored assertion')
@@ -237,6 +240,12 @@ describe('research-information tool composition', () => {
     )
     expect(JSON.stringify(observationWriteSchema)).toContain(
       'Use not-applicable only when experimental conditions genuinely do not apply',
+    )
+    const synthesisWriteSchema = setup.ctx.tools.schemas().find(schema =>
+      schema.name === 'research_synthesis_write')
+    expect(JSON.stringify(synthesisWriteSchema)).toContain('comparison_protocol_ids')
+    expect(JSON.stringify(synthesisWriteSchema)).toContain(
+      'Optional authored comparison bases for an inference. Omit when empty',
     )
     expect(setup.ctx.tools.get('research_question_list')?.isConcurrencySafe?.({})).toBe(true)
     expect(setup.ctx.tools.get('research_question_get')?.isConcurrencySafe?.({
@@ -517,6 +526,7 @@ describe('research-information tool composition', () => {
       uncited_inference_claim_ids: [inference.claim_id],
       inactive_claim_ids: [],
       inactive_synthesis_ids: [],
+      stale_synthesis_comparison_references: [],
     })
     expect(audit.uncited_inference_finding_ids).toHaveLength(1)
 
@@ -1079,7 +1089,7 @@ describe('research-information tool composition', () => {
               status: 'reported',
               values: [
                 {
-                  name: 'shots',
+                  name: 'shots_[k]',
                   value: '0',
                   source_claim_id: resultClaimId,
                   comparison_role: 'must-match',
@@ -1276,6 +1286,124 @@ describe('research-information tool composition', () => {
     expect(protocolResult.meta).toMatchObject({
       kind: 'dsh/research-comparison-protocol-write', version: 1,
     })
+    const protocolSynthesis = value(await setup.call('research_synthesis_write', {
+      question_id: created.questionId,
+      revision,
+      findings: [
+        {
+          kind: 'inference',
+          stance: 'agreement',
+          text: 'Alpha and Beta are compared under the retained protocol.',
+          claim_ids: [alpha.claims.result, beta.claims.result],
+          comparison_protocol_ids: [protocolId],
+        },
+        {
+          kind: 'inference',
+          stance: 'qualification',
+          text: 'The same retained protocol also qualifies the comparison.',
+          claim_ids: [alpha.claims.result, beta.claims.result],
+          comparison_protocol_ids: [protocolId],
+        },
+      ],
+    }))
+    revision = protocolSynthesis.revision as number
+    const retainedQuestion = setup.ctx.researchInformation.get(
+      ResearchQuestionId(created.questionId),
+    )
+    const retainedSynthesis = retainedQuestion?.syntheses.find(
+      synthesis => synthesis.id === protocolSynthesis.synthesis_id,
+    )
+    const retainedProtocol = retainedQuestion?.comparisonProtocols.find(
+      protocol => protocol.id === protocolId,
+    )
+    const retainedAlphaObservation = retainedQuestion?.observations.find(
+      observation => observation.id === alphaObservationId,
+    )
+    const retainedBetaObservation = retainedQuestion?.observations.find(
+      observation => observation.id === betaObservationId,
+    )
+    if (retainedSynthesis === undefined
+      || retainedProtocol === undefined
+      || retainedAlphaObservation === undefined
+      || retainedBetaObservation === undefined) {
+      throw new Error('protocol review records missing')
+    }
+    const protocolFindingIds = retainedSynthesis.findings.map(finding => String(finding.id))
+    expect(protocolFindingIds).toHaveLength(2)
+    const synthesisOverview = value(await setup.call('research_question_get', {
+      question_id: created.questionId,
+      view: 'overview',
+    }))
+    const projectedProtocolFinding = (
+      synthesisOverview.syntheses as Array<{ findings: Array<Record<string, unknown>> }>
+    )[0]?.findings[0]
+    expect(projectedProtocolFinding).toMatchObject({
+      comparison_protocol_ids: [protocolId],
+      total_comparison_protocols: 1,
+      comparison_protocol_ids_truncated: false,
+    })
+    expect(setup.ctx.researchInformation.get(
+      ResearchQuestionId(created.questionId),
+    )?.syntheses[0]?.findings[0]?.comparisonProtocolIds).toEqual([
+      ResearchComparisonProtocolId(protocolId),
+    ])
+    const protocolReview = value(await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: protocolSynthesis.synthesis_id,
+    }))
+    const protocolMarkdown = protocolReview.markdown as string
+    expect(protocolReview.warnings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'comparison-protocol-inactive' }),
+      expect.objectContaining({ code: 'comparison-protocol-stale' }),
+    ]))
+    expect(protocolReview.markdown).toContain('Comparison basis:')
+    expect(protocolReview.markdown).toContain('[C1](#comparison-protocol-c1) **[Current]**')
+    expect(protocolReview.markdown).toContain('## Comparison protocol ledger')
+    expect(protocolReview.markdown).toContain('## Observation ledger')
+    expect(protocolReview.markdown).toContain('Content role: **authored-comparison-decision**')
+    expect(protocolMarkdown).toContain(
+      `- Created by: ${retainedProtocol.createdBy.kind}:${retainedProtocol.createdBy.id}`,
+    )
+    expect(protocolMarkdown).toContain(`- Created at: ${retainedProtocol.createdAt}`)
+    expect(protocolReview.markdown).toContain('Current state: **current**')
+    expect(protocolReview.markdown).toContain('Direction: **higher-is-better**')
+    expect(protocolReview.markdown).toContain('Statistical significance: **not-assessed**')
+    expect(protocolReview.markdown).toContain(
+      'Observations, in authored order: [O1](#observation-o1), [O2](#observation-o2)',
+    )
+    expect(protocolReview.markdown).toContain(
+      '- Compatibility rationale:\n\nSame dataset, split, metric, unit, statistic, protocol, and conditions.',
+    )
+    expect(protocolReview.markdown).toContain('Content role: **authored-normalization**')
+    const observationLedger = protocolMarkdown.slice(
+      protocolMarkdown.indexOf('## Observation ledger'),
+      protocolMarkdown.indexOf('## Evidence ledger'),
+    )
+    expect(observationLedger.split('- Created by: ')).toHaveLength(3)
+    expect(observationLedger.split('- Created at: ')).toHaveLength(3)
+    for (const observation of [retainedAlphaObservation, retainedBetaObservation]) {
+      expect(observationLedger).toContain(
+        `- Created by: ${observation.createdBy.kind}:${observation.createdBy.id}`,
+      )
+      expect(observationLedger).toContain(`- Created at: ${observation.createdAt}`)
+    }
+    expect(protocolReview.markdown).toContain(`Alpha method (entity \`${alphaMethodId}\`)`)
+    expect(protocolReview.markdown).toContain(`FixtureBench (entity \`${datasetId}\`)`)
+    expect(protocolReview.markdown).toContain(`Fixture score (entity \`${metricId}\`)`)
+    expect(protocolReview.markdown).toContain('- Value: `90`')
+    expect(protocolReview.markdown).toContain('- Value: `80`')
+    expect(protocolReview.markdown.indexOf('- Value: `90`'))
+      .toBeLessThan(protocolReview.markdown.indexOf('- Value: `80`'))
+    expect(protocolReview.markdown).not.toContain('- Delta:')
+    expect(protocolReview.markdown).not.toContain('- Rank:')
+    expect(protocolMarkdown.split('[C1](#comparison-protocol-c1)')).toHaveLength(3)
+    expect(protocolMarkdown.split('### <a id="comparison-protocol-c1"></a>C1')).toHaveLength(2)
+    expect(protocolMarkdown).toContain(
+      `(result claim; source claim \`${alpha.claims.result}\`; supports)`,
+    )
+    expect(protocolMarkdown).toContain(
+      `(condition source claim "shots\\_\\[k\\]"; source claim \`${alpha.claims.result}\`; supports)`,
+    )
     const comparison = value(await setup.call('research_question_get', {
       question_id: created.questionId,
       view: 'comparisons',
@@ -1324,6 +1452,29 @@ describe('research-information tool composition', () => {
     setup.toolFiber = await setup.ctx.plugin(ResearchInformationTools, {
       maxReferencesPerResult: 1,
     })
+    const recoveredFindingProtocolIds: string[] = []
+    const findingReferencePages: Array<Record<string, unknown>> = []
+    let findingReferenceOffset = 0
+    for (;;) {
+      const output = value(await setup.call('research_question_get', {
+        question_id: created.questionId,
+        view: 'overview',
+        offset: retainedQuestion.evidence.length + retainedQuestion.claims.length,
+        max_items: 1,
+        reference_offset: findingReferenceOffset,
+      }))
+      findingReferencePages.push(output)
+      const synthesis = (output.syntheses as Array<Record<string, unknown>>)[0]
+      const findings = synthesis?.findings as Array<Record<string, unknown>> | undefined
+      recoveredFindingProtocolIds.push(...(findings ?? []).flatMap(finding =>
+        finding.comparison_protocol_ids as string[]))
+      if (typeof output.next_reference_offset !== 'number') break
+      findingReferenceOffset = output.next_reference_offset
+    }
+    expect(findingReferencePages.map(page => page.reference_offset)).toEqual(
+      Array.from({ length: findingReferencePages.length }, (_, index) => index),
+    )
+    expect(recoveredFindingProtocolIds).toEqual([protocolId, protocolId])
     const candidatePages = async (observationId: string) => Promise.all([0, 1].map(
       async referenceOffset => value(await setup.call('research_question_get', {
         question_id: created.questionId,
@@ -1408,6 +1559,15 @@ describe('research-information tool composition', () => {
     })).audit as Record<string, unknown>
     expect(staleAudit).toMatchObject({
       stale_comparison_protocol_ids: [protocolId],
+      stale_synthesis_comparison_references: expect.arrayContaining(
+        protocolFindingIds.map(findingId => ({
+          synthesis_id: protocolSynthesis.synthesis_id,
+          finding_id: findingId,
+          comparison_protocol_id: protocolId,
+          active: true,
+          stale: true,
+        })),
+      ),
       unprotocolled_observation_ids: [betaObservationId, incompleteObservationId, betaPeerObservationId],
       unobserved_result_claim_ids: [replacementClaim.claim_id],
     })
@@ -1416,6 +1576,21 @@ describe('research-information tool composition', () => {
       reference_kind: 'result-claim',
       claim_id: alpha.claims.result,
     })
+    const staleProtocolReview = value(await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: protocolSynthesis.synthesis_id,
+    }))
+    const staleProtocolWarnings = (staleProtocolReview.warnings as Array<Record<string, unknown>>)
+      .filter(warning => warning.code === 'comparison-protocol-stale')
+    expect(staleProtocolWarnings).toEqual(protocolFindingIds.map(findingId =>
+      expect.objectContaining({
+        code: 'comparison-protocol-stale',
+        finding_id: findingId,
+        comparison_protocol_id: protocolId,
+      })))
+    expect((staleProtocolReview.markdown as string)
+      .split('### <a id="comparison-protocol-c1"></a>C1')).toHaveLength(2)
+    expect(staleProtocolReview.markdown).toContain('Current state: **stale**')
 
     const replacementObservationId = await writeObservation({
       paper: alpha,
@@ -1476,16 +1651,79 @@ describe('research-information tool composition', () => {
     expect(finalAudit).toMatchObject({
       inactive_observation_ids: [alphaObservationId],
       inactive_comparison_protocol_ids: [protocolId],
+      stale_synthesis_comparison_references: expect.arrayContaining(
+        protocolFindingIds.map(findingId => ({
+          synthesis_id: protocolSynthesis.synthesis_id,
+          finding_id: findingId,
+          comparison_protocol_id: protocolId,
+          active: false,
+          stale: true,
+        })),
+      ),
       stale_comparison_protocol_ids: [],
       unprotocolled_observation_ids: [incompleteObservationId, betaPeerObservationId],
       unobserved_result_claim_ids: [],
     })
+    const inactiveProtocolReview = value(await setup.call('research_review_render', {
+      question_id: created.questionId,
+      synthesis_id: protocolSynthesis.synthesis_id,
+    }))
+    expect(inactiveProtocolReview.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'comparison-protocol-inactive',
+        comparison_protocol_id: protocolId,
+      }),
+      expect.objectContaining({
+        code: 'comparison-protocol-stale',
+        comparison_protocol_id: protocolId,
+      }),
+    ]))
+    const inactiveProtocolWarnings = (
+      inactiveProtocolReview.warnings as Array<Record<string, unknown>>
+    ).filter(warning => warning.code === 'comparison-protocol-inactive')
+    expect(inactiveProtocolWarnings).toEqual(protocolFindingIds.map(findingId =>
+      expect.objectContaining({
+        code: 'comparison-protocol-inactive',
+        finding_id: findingId,
+        comparison_protocol_id: protocolId,
+      })))
+    expect(inactiveProtocolReview.markdown).toContain('Current state: **inactive; stale**')
 
     await setup.toolFiber.dispose()
     setup.toolFiber = await setup.ctx.plugin(ResearchInformationTools, {
       maxItemsPerResult: 1,
       maxReferencesPerResult: 1,
     })
+    const recoveredStaleSynthesisComparisonReferences: Array<Record<string, unknown>> = []
+    const staleComparisonAuditPages: Array<Record<string, unknown>> = []
+    let staleComparisonReferenceOffset = 0
+    for (;;) {
+      const output = value(await setup.call('research_question_get', {
+        question_id: created.questionId,
+        view: 'audit',
+        max_items: 1,
+        reference_offset: staleComparisonReferenceOffset,
+      }))
+      staleComparisonAuditPages.push(output)
+      recoveredStaleSynthesisComparisonReferences.push(
+        ...((output.audit as Record<string, unknown>)
+          .stale_synthesis_comparison_references as Array<Record<string, unknown>>),
+      )
+      if (typeof output.next_reference_offset !== 'number') break
+      staleComparisonReferenceOffset = output.next_reference_offset
+    }
+    expect(staleComparisonAuditPages.map(page => page.reference_offset)).toEqual(
+      Array.from({ length: staleComparisonAuditPages.length }, (_, index) => index),
+    )
+    expect(recoveredStaleSynthesisComparisonReferences).toEqual(
+      protocolFindingIds.map(findingId => ({
+        synthesis_id: protocolSynthesis.synthesis_id,
+        finding_id: findingId,
+        comparison_protocol_id: protocolId,
+        active: false,
+        stale: true,
+      })),
+    )
     const recoveredReferences: string[] = []
     const referencePages: Array<Record<string, unknown>> = []
     let referenceOffset = 0
@@ -1669,7 +1907,7 @@ describe('research-information tool composition', () => {
     }
     expect(decimalPages.length).toBeGreaterThan(1)
     expect(decimalParts.join('')).toBe(exactDecimal)
-    expect(revision).toBe(29)
+    expect(revision).toBe(30)
     const replacementDataset = value(await setup.call('research_entity_write', {
       question_id: created.questionId,
       revision,
@@ -2472,10 +2710,25 @@ describe('research-information tool composition', () => {
     expect(Object.hasOwn(tailSynthesis ?? {}, 'next_finding_offset')).toBe(false)
     const recoveredFindings = [firstSynthesisPage, tailSynthesis].flatMap(projected =>
       (projected?.findings as Array<Record<string, unknown>> | undefined) ?? [])
-    expect(recoveredFindings.map(finding => finding.text)).toEqual([
-      'Reported result.',
-      'Generalization is uncertain.',
-      'Replication remains open.',
+    expect(recoveredFindings).toMatchObject([
+      {
+        text: 'Reported result.',
+        comparison_protocol_ids: [],
+        total_comparison_protocols: 0,
+        comparison_protocol_ids_truncated: false,
+      },
+      {
+        text: 'Generalization is uncertain.',
+        comparison_protocol_ids: [],
+        total_comparison_protocols: 0,
+        comparison_protocol_ids_truncated: false,
+      },
+      {
+        text: 'Replication remains open.',
+        comparison_protocol_ids: [],
+        total_comparison_protocols: 0,
+        comparison_protocol_ids_truncated: false,
+      },
     ])
 
     const beyondItems = value(await setup.call('research_question_get', {
@@ -3624,6 +3877,32 @@ describe('research-information tool composition', () => {
       .mockResolvedValueOnce({
         status: 'source-summary-claim-kind-mismatch', findingIndex: 3, claimId: missingClaim,
       })
+      .mockResolvedValueOnce({
+        status: 'comparison-protocol-not-found',
+        findingIndex: 4,
+        comparisonProtocolId: missingProtocol,
+      })
+      .mockResolvedValueOnce({
+        status: 'comparison-protocol-inactive',
+        findingIndex: 5,
+        comparisonProtocolId: missingProtocol,
+      })
+      .mockResolvedValueOnce({
+        status: 'comparison-protocol-stale',
+        findingIndex: 6,
+        comparisonProtocolId: missingProtocol,
+      })
+      .mockResolvedValueOnce({
+        status: 'comparison-protocol-finding-kind-mismatch',
+        findingIndex: 7,
+        comparisonProtocolId: missingProtocol,
+      })
+      .mockResolvedValueOnce({
+        status: 'comparison-protocol-result-claim-missing',
+        findingIndex: 8,
+        comparisonProtocolId: missingProtocol,
+        claimId: missingClaim,
+      })
       .mockResolvedValueOnce({ status: 'supersedes-synthesis-not-found', synthesisId: missingSynthesis })
       .mockResolvedValueOnce({ status: 'supersedes-synthesis-inactive', synthesisId: missingSynthesis })
     for (const expected of [
@@ -3631,15 +3910,50 @@ describe('research-information tool composition', () => {
       { status: 'claim-inactive', claim_id: missingClaim },
       { status: 'source-summary-uncited', finding_index: 2 },
       { status: 'source-summary-claim-kind-mismatch', finding_index: 3, claim_id: missingClaim },
+      {
+        status: 'comparison-protocol-not-found',
+        finding_index: 4,
+        comparison_protocol_id: missingProtocol,
+      },
+      {
+        status: 'comparison-protocol-inactive',
+        finding_index: 5,
+        comparison_protocol_id: missingProtocol,
+      },
+      {
+        status: 'comparison-protocol-stale',
+        finding_index: 6,
+        comparison_protocol_id: missingProtocol,
+      },
+      {
+        status: 'comparison-protocol-finding-kind-mismatch',
+        finding_index: 7,
+        comparison_protocol_id: missingProtocol,
+      },
+      {
+        status: 'comparison-protocol-result-claim-missing',
+        finding_index: 8,
+        comparison_protocol_id: missingProtocol,
+        claim_id: missingClaim,
+      },
       { status: 'supersedes-synthesis-not-found', synthesis_id: missingSynthesis },
       { status: 'supersedes-synthesis-inactive', synthesis_id: missingSynthesis },
     ]) {
       expect(value(await setup.call('research_synthesis_write', {
         question_id: created.questionId,
         revision: 0,
-        findings: [{ kind: 'inference', stance: 'open-question', text: 'Projected', claim_ids: [] }],
+        findings: [{
+          kind: 'inference',
+          stance: 'open-question',
+          text: 'Projected',
+          claim_ids: [],
+          comparison_protocol_ids: [missingProtocol],
+        }],
       }))).toMatchObject(expected)
     }
+    expect(synthesisWrite.mock.calls[0]?.[0].findings[0]?.comparisonProtocolIds).toEqual([
+      missingProtocol,
+    ])
     synthesisWrite.mockRestore()
     await dispose(setup)
   })
@@ -3745,6 +4059,17 @@ describe('research-information tool composition', () => {
         revision: 0,
         findings: [{
           kind: 'inference', stance: 'open-question', text: 'Bad claim', claim_ids: ['bad-claim'],
+        }],
+      }],
+      ['research_synthesis_write', {
+        question_id: created.questionId,
+        revision: 0,
+        findings: [{
+          kind: 'inference',
+          stance: 'open-question',
+          text: 'Bad comparison protocol',
+          claim_ids: [],
+          comparison_protocol_ids: ['bad-comparison-protocol'],
         }],
       }],
       ['research_synthesis_write', {
@@ -4144,7 +4469,7 @@ describe('research-information tool composition', () => {
     const promptSection = vi.spyOn(setup.ctx.systemPrompt, 'section').mockReturnValue(() => {})
     const toolRegister = vi.spyOn(setup.ctx.tools, 'register').mockReturnValue(() => {})
     ResearchInformationTools.apply(setup.ctx)
-    expect(promptSection).toHaveBeenCalledOnce()
+    expect(promptSection).toHaveBeenCalledTimes(2)
     expect(toolRegister).toHaveBeenCalledTimes(11)
     promptSection.mockRestore()
     toolRegister.mockRestore()
