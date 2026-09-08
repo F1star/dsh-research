@@ -1,12 +1,12 @@
 /**
  * Durable questions, evidence, reading notes, claims, normalized entities, observations,
  * comparison protocols, and cited synthesis.
- * @module @f1star/dsh-research/research-information
+ * @module @deepseek-ai/dsh-research-information
  */
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
-import type { CaptureResearchEvidenceRequest, CaptureResearchEvidenceResult, ResearchAuthorId as ResearchAuthorIdBrand, ResearchClaimId as ResearchClaimIdBrand, ResearchComparisonProtocolId as ResearchComparisonProtocolIdBrand, ResearchDecimal as ResearchDecimalBrand, ResearchEvidenceId as ResearchEvidenceIdBrand, ResearchEvidenceTextHash as ResearchEvidenceTextHashBrand, ResearchEntityId as ResearchEntityIdBrand, ResearchFindingId as ResearchFindingIdBrand, ResearchObservationId as ResearchObservationIdBrand, ResearchReadingNoteId as ResearchReadingNoteIdBrand, ResearchQuestionId as ResearchQuestionIdBrand, ResearchQuestionRecord, ResearchSynthesisId as ResearchSynthesisIdBrand, WriteResearchClaimRequest, WriteResearchClaimResult, WriteResearchComparisonProtocolRequest, WriteResearchComparisonProtocolResult, WriteResearchEntityRequest, WriteResearchEntityResult, WriteResearchObservationRequest, WriteResearchObservationResult, WriteResearchQuestionRequest, WriteResearchQuestionResult, WriteResearchReadingNoteRequest, WriteResearchReadingNoteResult, WriteResearchSynthesisRequest, WriteResearchSynthesisResult } from './types.ts';
-export type { CaptureResearchEvidenceRequest, CaptureResearchEvidenceResult, ResearchAuthorship, ResearchClaim, ResearchClaimEvidenceLink, ResearchClaimReferenceFailure, ResearchEvidence, ResearchEvidenceProvenanceMismatch, ResearchEvidenceRelation, ResearchEvidenceSelection, ResearchEntity, ResearchEntityKind, ResearchEntityReferenceFailure, ResearchFacet, ResearchFinding, ResearchFindingInput, ResearchFindingKind, ResearchFindingStance, ResearchInformationCapacity, ResearchComparisonDimension, ResearchComparisonDirection, ResearchComparisonProtocol, ResearchComparisonProtocolReferenceFailure, ResearchMethodRole, ResearchObservation, ResearchObservationClaimRole, ResearchObservationCondition, ResearchObservationConditionRole, ResearchObservationConditions, ResearchObservationDataset, ResearchObservationEntityReference, ResearchObservationEntityRole, ResearchObservationMethod, ResearchObservationReferenceFailure, ResearchObservationReportedContext, ResearchObservationUncertainty, ResearchObservationUnit, ResearchReportedUncertainty, ResearchReadingNote, ResearchReadingNoteReferenceFailure, ResearchQuestionMutationFailure, ResearchQuestionRecord, ResearchSynthesis, ResearchSynthesisReferenceFailure, WriteResearchClaimRequest, WriteResearchClaimResult, WriteResearchComparisonProtocolRequest, WriteResearchComparisonProtocolResult, WriteResearchEntityRequest, WriteResearchEntityResult, WriteResearchObservationRequest, WriteResearchObservationResult, WriteResearchQuestionRequest, WriteResearchQuestionResult, WriteResearchReadingNoteRequest, WriteResearchReadingNoteResult, WriteResearchSynthesisRequest, WriteResearchSynthesisResult, } from './types.ts';
+import type { CaptureResearchEvidenceRequest, CaptureResearchEvidenceResult, ResearchAuthorId as ResearchAuthorIdBrand, ResearchObservationState, ReviewResearchObservationRequest, ReviewResearchObservationResult, ReviewResearchClaimRequest, ReviewResearchClaimResult, ResearchClaimId as ResearchClaimIdBrand, ResearchComparisonProtocolId as ResearchComparisonProtocolIdBrand, ResearchDecimal as ResearchDecimalBrand, ResearchEvidenceId as ResearchEvidenceIdBrand, ResearchEvidenceTextHash as ResearchEvidenceTextHashBrand, ResearchEntityId as ResearchEntityIdBrand, ResearchFindingId as ResearchFindingIdBrand, ResearchObservation, ResearchObservationId as ResearchObservationIdBrand, ResearchReadingNoteId as ResearchReadingNoteIdBrand, ResearchQuestionId as ResearchQuestionIdBrand, ResearchQuestionRecord, ResearchSynthesisId as ResearchSynthesisIdBrand, WriteResearchClaimRequest, WriteResearchClaimResult, WriteResearchComparisonProtocolRequest, WriteResearchComparisonProtocolResult, WriteResearchEntityRequest, WriteResearchEntityResult, WriteResearchObservationRequest, WriteResearchObservationResult, WriteResearchQuestionRequest, WriteResearchQuestionResult, WriteResearchReadingNoteRequest, WriteResearchReadingNoteResult, WriteResearchSynthesisRequest, WriteResearchSynthesisResult } from './types.ts';
+export type { CaptureResearchEvidenceRequest, CaptureResearchEvidenceResult, ResearchAuthorship, ResearchClaim, ResearchClaimReview, ResearchClaimReviewDecision, ResearchClaimReviewId, ResearchReviewAssessment, ResearchObservationReview, ResearchObservationReviewDecision, ResearchObservationReviewId, ResearchObservationState, ReviewResearchObservationRequest, ReviewResearchObservationResult, ReviewResearchClaimRequest, ReviewResearchClaimResult, ResearchClaimEvidenceLink, ResearchClaimReferenceFailure, ResearchEvidence, ResearchEvidenceProvenanceMismatch, ResearchEvidenceRelation, ResearchEvidenceSelection, ResearchEntity, ResearchEntityKind, ResearchEntityReferenceFailure, ResearchFacet, ResearchFinding, ResearchFindingInput, ResearchFindingKind, ResearchFindingStance, ResearchInformationCapacity, ResearchComparisonDimension, ResearchComparisonDirection, ResearchComparisonProtocol, ResearchComparisonProtocolReferenceFailure, ResearchMethodRole, ResearchObservation, ResearchObservationClaimRole, ResearchObservationCondition, ResearchObservationConditionRole, ResearchObservationConditions, ResearchObservationDataset, ResearchObservationEntityReference, ResearchObservationEntityRole, ResearchObservationMethod, ResearchObservationReferenceFailure, ResearchObservationReportedContext, ResearchObservationUncertainty, ResearchObservationUnit, ResearchReportedUncertainty, ResearchReadingNote, ResearchReadingNoteReferenceFailure, ResearchQuestionMutationFailure, ResearchQuestionRecord, ResearchSynthesis, ResearchSynthesisReferenceFailure, WriteResearchClaimRequest, WriteResearchClaimResult, WriteResearchComparisonProtocolRequest, WriteResearchComparisonProtocolResult, WriteResearchEntityRequest, WriteResearchEntityResult, WriteResearchObservationRequest, WriteResearchObservationResult, WriteResearchQuestionRequest, WriteResearchQuestionResult, WriteResearchReadingNoteRequest, WriteResearchReadingNoteResult, WriteResearchSynthesisRequest, WriteResearchSynthesisResult, } from './types.ts';
 export { researchInformationDomainSpec, researchQuestionRecord } from './spec.ts';
 /** Stable identity of one durable research-question aggregate. */
 export type ResearchQuestionId = ResearchQuestionIdBrand;
@@ -115,6 +115,8 @@ export declare const DEFAULT_MAX_QUESTIONS = 1000;
 export declare const DEFAULT_MAX_EVIDENCE_PER_QUESTION = 10000;
 /** Default maximum claims per question. */
 export declare const DEFAULT_MAX_CLAIMS_PER_QUESTION = 10000;
+/** Default maximum researcher decisions per question. */
+export declare const DEFAULT_MAX_CLAIM_REVIEWS_PER_QUESTION = 10000;
 /** Default maximum synthesis records per question. */
 export declare const DEFAULT_MAX_SYNTHESES_PER_QUESTION = 1000;
 /** Default maximum findings in one synthesis. */
@@ -135,6 +137,10 @@ export declare const DEFAULT_MAX_CLAIM_REFERENCES_PER_ENTITY = 256;
 export declare const DEFAULT_MAX_SUPERSEDED_ENTITIES_PER_ENTITY = 64;
 /** Default maximum normalized observations per question. */
 export declare const DEFAULT_MAX_OBSERVATIONS_PER_QUESTION = 10000;
+/** Default maximum immutable observation assessments per question. */
+export declare const DEFAULT_MAX_OBSERVATION_REVIEWS_PER_QUESTION = 10000;
+/** Default maximum counterevidence references on one observation assessment. */
+export declare const DEFAULT_MAX_COUNTER_EVIDENCE_PER_OBSERVATION_REVIEW = 64;
 /** Default maximum reported conditions on one observation. */
 export declare const DEFAULT_MAX_CONDITIONS_PER_OBSERVATION = 64;
 /** Default maximum authored comparison protocols per question. */
@@ -155,6 +161,8 @@ export interface Config {
     readonly maxEvidencePerQuestion?: number;
     /** Maximum immutable claims per question. Defaults to 10000. */
     readonly maxClaimsPerQuestion?: number;
+    /** Maximum immutable researcher decisions per question. Defaults to 10000. */
+    readonly maxClaimReviewsPerQuestion?: number;
     /** Maximum immutable syntheses per question. Defaults to 1000. */
     readonly maxSynthesesPerQuestion?: number;
     /** Maximum findings in one synthesis. Defaults to 256. */
@@ -175,6 +183,10 @@ export interface Config {
     readonly maxSupersededEntitiesPerEntity?: number;
     /** Maximum immutable normalized observations per question. Defaults to 10000. */
     readonly maxObservationsPerQuestion?: number;
+    /** Maximum immutable researcher observation assessments per question. Defaults to 10000. */
+    readonly maxObservationReviewsPerQuestion?: number;
+    /** Maximum counterevidence references per observation assessment. Defaults to 64. */
+    readonly maxCounterEvidencePerObservationReview?: number;
     /** Maximum reported conditions on one observation. Defaults to 64. */
     readonly maxConditionsPerObservation?: number;
     /** Maximum immutable comparison protocols per question. Defaults to 1000. */
@@ -234,6 +246,12 @@ export declare class ResearchInformation extends Service {
      */
     writeClaim(request: WriteResearchClaimRequest): Promise<WriteResearchClaimResult>;
     /**
+     * Record a researcher assessment, atomically appending a replacement for a revision.
+     * @param request - trusted authorship, current revision, assessment, and optional replacement.
+     * @returns the committed review or an explicit refusal without writing; agent authors are refused.
+     */
+    reviewClaim(request: ReviewResearchClaimRequest): Promise<ReviewResearchClaimResult>;
+    /**
      * Append an immutable authored normalization and optionally merge active same-kind entity lineages.
      * @param request - Entity name, kind, source-claim references, authorship, and revision.
      * @returns the committed aggregate or an explicit non-writing failure.
@@ -247,6 +265,12 @@ export declare class ResearchInformation extends Service {
      * @throws Synchronously when a normalized field combination or decimal value is invalid.
      */
     writeObservation(request: WriteResearchObservationRequest): Promise<WriteResearchObservationResult>;
+    /**
+     * Assess one active normalized result; a revised result and its approval share one atomic write.
+     * @param request - researcher identity, current question revision, assessment, and optional complete replacement.
+     * @returns committed history or a refusal without changing either the observation or its reviews.
+     */
+    reviewObservation(request: ReviewResearchObservationRequest): Promise<ReviewResearchObservationResult>;
     /**
      * Append an authored compatibility decision over cross-paper observations.
      * @param request - Observation members, comparison direction, rationale, authorship, and revision.
@@ -276,13 +300,19 @@ export declare class ResearchInformation extends Service {
     private captureEvidenceNow;
     private writeReadingNoteNow;
     private writeClaimNow;
+    private prepareClaim;
+    private reviewClaimNow;
+    private reviewObservationNow;
     private writeEntityNow;
     private writeObservationNow;
+    private prepareObservation;
     private writeComparisonProtocolNow;
     private writeSynthesisNow;
     private normalizeQuestionWrite;
     private normalizeEvidenceRequest;
     private normalizeClaimRequest;
+    private normalizeReviewAssessment;
+    private normalizeReviewRequest;
     private normalizeReadingNoteRequest;
     private normalizeEntityRequest;
     private normalizeObservationRequest;
@@ -304,6 +334,9 @@ export declare class ResearchInformation extends Service {
     private normalizeAuthoredText;
     private exactText;
     private fieldCapacity;
+    private validateReviewHistory;
+    private validateStoredReviews;
+    private validateStoredObservationReviews;
     private validateStoredState;
     private validateStoredRecord;
     private assertCanonicalStoredObservation;
@@ -323,5 +356,12 @@ export declare class ResearchInformation extends Service {
     private requireTable;
     private enqueueOperation;
 }
+/**
+ * Project current source validity and the latest researcher assessment of one observation.
+ * @param record - complete question containing the observation and its immutable review history.
+ * @param observation - one observation from that question.
+ * @returns structural currency, latest decision, and rejected supporting claims; none implies scientific truth.
+ */
+export declare function researchObservationState(record: ResearchQuestionRecord, observation: ResearchObservation): ResearchObservationState;
 export default ResearchInformation;
 //# sourceMappingURL=index.d.ts.map

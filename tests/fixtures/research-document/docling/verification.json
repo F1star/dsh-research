@@ -1,0 +1,44 @@
+{
+  "source": "scientific-scan.pdf",
+  "ocr_table_exact": true,
+  "chart_points_exact": false,
+  "chart_expected": [
+    [
+      1,
+      70,
+      72
+    ],
+    [
+      2,
+      75,
+      80
+    ],
+    [
+      3,
+      80,
+      85.5
+    ]
+  ],
+  "chart_actual": [
+    [
+      1.0,
+      70.0,
+      72.0
+    ],
+    [
+      2.0,
+      75.0,
+      80.0
+    ],
+    [
+      3.0,
+      80.0,
+      85.0
+    ]
+  ],
+  "formula_latex": "= \\frac { 1 0 0 } { N } \\sum _ { i = 1 } ^ { N } { \\mathbf 1 } ( \\hat { y } _ { i } = y _ { i } )",
+  "formula_left_hand_symbol_present": false,
+  "docling": "2.126.0",
+  "transformers": "5.8.1",
+  "sourceSha256": "42b96084d8dce29db2710d50aa58bae55849b1385b401bc766a6c2b3d4d54671"
+}

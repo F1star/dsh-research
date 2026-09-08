@@ -1,12 +1,12 @@
 /**
  * Durable schema and storage-domain declaration for research information.
- * @module @f1star/dsh-research/research-information/src/spec
+ * @module @deepseek-ai/dsh-research-information/src/spec
  */
 import { z } from 'zod';
 import type { ResearchQuestionId, ResearchQuestionRecord } from './types.ts';
 /** Durable schema for one research-question aggregate. */
 export declare const researchQuestionRecord: z.ZodType<ResearchQuestionRecord>;
-/** Version-five aggregate store whose synthesis findings explicitly retain comparison protocols. */
+/** Version-seven store retaining researcher decisions and synthesis comparison provenance. */
 export declare const researchInformationDomainSpec: {
     name: string;
     version: number;

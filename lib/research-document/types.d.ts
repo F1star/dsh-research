@@ -1,33 +1,15 @@
 /**
  * Provider and consumer types for parsed research documents. Runtime id
  * factories and error classes live in the package root.
- * @module @f1star/dsh-research/research-document/types
+ * @module @deepseek-ai/dsh-research-document/types
  */
 import type { Branded } from '@deepseek-ai/dsh-brand';
 /** Content-derived identity of one exact imported document version. */
 export type ResearchDocumentId = Branded<'ResearchDocumentId'>;
-/**
- * Brand an exact document content hash as a runtime document id.
- * @param value - validated or runtime-generated document hash.
- * @returns the same string with its document-id brand.
- */
-export declare function ResearchDocumentId(value: string): ResearchDocumentId;
 /** Stable identity of one parsed block inside an exact document version. */
 export type ResearchDocumentBlockId = Branded<'ResearchDocumentBlockId'>;
-/**
- * Brand a runtime-owned block identity.
- * @param value - validated or runtime-generated block id.
- * @returns the same string with its block-id brand.
- */
-export declare function ResearchDocumentBlockId(value: string): ResearchDocumentBlockId;
 /** Content hash of the complete text carried by one block anchor. */
 export type ResearchDocumentQuoteHash = Branded<'ResearchDocumentQuoteHash'>;
-/**
- * Brand a complete block-text hash as a quote-integrity token.
- * @param value - runtime-generated quote hash.
- * @returns the same string with its quote-hash brand.
- */
-export declare function ResearchDocumentQuoteHash(value: string): ResearchDocumentQuoteHash;
 /** Rectangle normalized to the page's top-left coordinate space. */
 export interface ResearchDocumentRect {
     /** Horizontal offset divided by page width. */
@@ -60,6 +42,8 @@ export interface ResearchDocumentBlock {
     readonly id: ResearchDocumentBlockId;
     readonly kind: 'heading' | 'paragraph';
     readonly text: string;
+    /** Machine-extracted scientific content; generated interpretations are not block quotations. */
+    readonly structure?: ResearchDocumentStructure;
     /** Heading ancestry after applying this block. */
     readonly sectionPath: readonly string[];
     /** Heading level when `kind` is `heading`. */
@@ -87,8 +71,51 @@ export type ResearchDocumentExtraction = {
     readonly text: 'native';
     readonly layout: 'approximate';
 } | {
+    readonly text: 'ocr-assisted';
+    readonly layout: 'approximate';
+} | {
     readonly text: 'none';
     readonly layout: 'page-only';
+};
+/** One extracted cell. Offsets are zero-based; merged cells occupy their full span. */
+export interface ResearchDocumentTableCell {
+    readonly row: number;
+    readonly column: number;
+    readonly rowSpan: number;
+    readonly columnSpan: number;
+    readonly text: string;
+    readonly columnHeader: boolean;
+    readonly rowHeader: boolean;
+    /** Source-page coordinates when supplied by the extractor; absent for generated chart data. */
+    readonly bbox?: ResearchDocumentRect;
+}
+/** Extracted cell grid; empty text is retained and is not a numeric zero. */
+export interface ResearchDocumentTable {
+    readonly rows: number;
+    readonly columns: number;
+    readonly cells: readonly ResearchDocumentTableCell[];
+}
+/** Scientific object extracted from a located block; all values require interpretation review. */
+export type ResearchDocumentStructure = {
+    readonly kind: 'table';
+    readonly data: ResearchDocumentTable;
+    readonly captions: readonly string[];
+    readonly footnotes: readonly string[];
+} | {
+    readonly kind: 'formula';
+    /** Recognized notation, not a claim that the equation or its transcription is correct. */
+    readonly latex: string | null;
+    readonly status: 'extracted' | 'not-requested' | 'unavailable';
+} | {
+    readonly kind: 'figure';
+    readonly captions: readonly string[];
+    readonly footnotes: readonly string[];
+    /** Predicted figure class; null when no classifier result is available. */
+    readonly classification: string | null;
+    /** Vision-generated values, distinct from original captions and OCR text. */
+    readonly chartData: ResearchDocumentTable | null;
+    readonly description: string | null;
+    readonly status: 'extracted' | 'not-requested' | 'unavailable';
 };
 /** Readonly parsed representation retained by the runtime. */
 export interface ResearchDocument {
@@ -108,6 +135,7 @@ export interface ResearchDocument {
 export interface ParsedResearchDocumentBlock {
     readonly kind: 'heading' | 'paragraph';
     readonly text: string;
+    readonly structure?: ResearchDocumentStructure;
     readonly bbox: ResearchDocumentRect;
     readonly headingLevel?: 1 | 2 | 3;
 }
@@ -146,6 +174,36 @@ export interface ResearchDocumentParser {
     supports(mediaType: string): boolean;
     /** Parse one complete, consumer-bounded runtime snapshot without retaining it. */
     parse(request: ResearchDocumentParseRequest, signal?: AbortSignal): Promise<ResearchDocumentParseResult>;
+}
+/** Exact extraction implementation and revision used by an archived snapshot. */
+export interface ResearchDocumentParserIdentity {
+    readonly id: string;
+    readonly version: string;
+}
+/** Source bytes and parser output saved together before publishing an import. */
+export interface ResearchDocumentSnapshot {
+    readonly documentId: ResearchDocumentId;
+    readonly mediaType: string;
+    /** Owned source snapshot; callers must not mutate the bytes. */
+    readonly bytes: Uint8Array;
+    readonly parserId: string;
+    readonly parsed: ResearchDocumentParseResult;
+}
+/** Optional durable provider. Stored bytes and parsed revisions must remain exact. */
+export interface ResearchDocumentArchive {
+    /**
+     * Commit a source and parser revision atomically without discarding older revisions.
+     * @param snapshot - runtime-owned bytes and complete parser result.
+     * @returns resolution after durability; failure leaves the archive unchanged.
+     */
+    save(snapshot: ResearchDocumentSnapshot): Promise<void>;
+    /**
+     * Recover a validated snapshot without reparsing or requiring the original file.
+     * @param documentId - exact content-derived document id.
+     * @param parser - exact historical parser; omission selects the last saved revision.
+     * @returns saved snapshot, or undefined when that document or revision is absent.
+     */
+    load(documentId: ResearchDocumentId, parser?: ResearchDocumentParserIdentity): Promise<ResearchDocumentSnapshot | undefined>;
 }
 /** One outline entry projected from a parsed heading block. */
 export interface ResearchDocumentOutlineEntry {

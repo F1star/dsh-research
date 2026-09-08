@@ -1,6 +1,6 @@
 /**
  * Package-owned invariant registration for the PDF.js research-document provider.
- * @module @f1star/dsh-research/research-document-pdfjs/invariant
+ * @module @deepseek-ai/dsh-research-document-pdfjs/invariant
  */
 
 import type { Context } from '@deepseek-ai/cordis'

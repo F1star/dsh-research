@@ -1,12 +1,12 @@
 /**
  * Package-owned invariant registration for the research-document runtime.
- * @module @f1star/dsh-research/research-document/invariant
+ * @module @deepseek-ai/dsh-research-document/invariant
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 
-const PACKAGE_NAME = '../research-document/index.ts'
+const PACKAGE_NAME = '@f1star/dsh-research/research-document'
 
 /** Cordis companion plugin name. */
 export const name = 'research-document-invariant'

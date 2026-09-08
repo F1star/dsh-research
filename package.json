@@ -1,7 +1,7 @@
 {
   "name": "@f1star/dsh-research",
-  "version": "0.3.0",
-  "description": "A DeepSeek Harness bundle for local PDF reading, durable paper records, traceable evidence, and cross-paper synthesis.",
+  "version": "0.4.0",
+  "description": "A DeepSeek Harness research workspace with archived PDF reading, optional OCR, human review, cited reports, and recoverable research tasks.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -67,7 +67,104 @@
       "default": "./lib/tool-research-information/invariant.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./research-document/types": {
+      "types": "./lib/research-document/types.d.ts",
+      "default": "./lib/research-document/types.js"
+    },
+    "./research-document-docling": {
+      "types": "./lib/research-document-docling/index.d.ts",
+      "default": "./lib/research-document-docling/index.js"
+    },
+    "./research-document-docling/invariant": {
+      "types": "./lib/research-document-docling/invariant.d.ts",
+      "default": "./lib/research-document-docling/invariant.js"
+    },
+    "./research-document-storage": {
+      "types": "./lib/research-document-storage/index.d.ts",
+      "default": "./lib/research-document-storage/index.js"
+    },
+    "./research-document-storage/invariant": {
+      "types": "./lib/research-document-storage/invariant.d.ts",
+      "default": "./lib/research-document-storage/invariant.js"
+    },
+    "./research-information/types": {
+      "types": "./lib/research-information/types.d.ts",
+      "default": "./lib/research-information/types.js"
+    },
+    "./research-library/types": {
+      "types": "./lib/research-library/types.d.ts",
+      "default": "./lib/research-library/types.js"
+    },
+    "./research-report": {
+      "types": "./lib/research-report/index.d.ts",
+      "default": "./lib/research-report/index.js"
+    },
+    "./research-report/invariant": {
+      "types": "./lib/research-report/invariant.d.ts",
+      "default": "./lib/research-report/invariant.js"
+    },
+    "./research-report/types": {
+      "types": "./lib/research-report/types.d.ts",
+      "default": "./lib/research-report/types.js"
+    },
+    "./research-task": {
+      "types": "./lib/research-task/index.d.ts",
+      "default": "./lib/research-task/index.js"
+    },
+    "./research-task/invariant": {
+      "types": "./lib/research-task/invariant.d.ts",
+      "default": "./lib/research-task/invariant.js"
+    },
+    "./research-task/types": {
+      "types": "./lib/research-task/types.d.ts",
+      "default": "./lib/research-task/types.js"
+    },
+    "./research-task-runner": {
+      "types": "./lib/research-task-runner/index.d.ts",
+      "default": "./lib/research-task-runner/index.js"
+    },
+    "./research-task-runner/invariant": {
+      "types": "./lib/research-task-runner/invariant.d.ts",
+      "default": "./lib/research-task-runner/invariant.js"
+    },
+    "./research-task-runner/types": {
+      "types": "./lib/research-task-runner/types.d.ts",
+      "default": "./lib/research-task-runner/types.js"
+    },
+    "./research-workspace": {
+      "types": "./lib/research-workspace/index.d.ts",
+      "default": "./lib/research-workspace/index.js"
+    },
+    "./research-workspace/invariant": {
+      "types": "./lib/research-workspace/invariant.d.ts",
+      "default": "./lib/research-workspace/invariant.js"
+    },
+    "./research-workspace/types": {
+      "types": "./lib/research-workspace/types.d.ts",
+      "default": "./lib/research-workspace/types.js"
+    },
+    "./tool-research-task": {
+      "types": "./lib/tool-research-task/index.d.ts",
+      "default": "./lib/tool-research-task/index.js"
+    },
+    "./tool-research-task/invariant": {
+      "types": "./lib/tool-research-task/invariant.d.ts",
+      "default": "./lib/tool-research-task/invariant.js"
+    },
+    "./client": {
+      "types": "./lib/browser.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./types": {
+      "types": "./lib/research-workspace/types.d.ts",
+      "default": "./lib/research-workspace/types.js"
+    },
+    "./typert": "./lib/typert.host.js",
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
+    }
   },
   "files": [
     "lib/",
@@ -75,13 +172,17 @@
     "README.md",
     "README.zh-CN.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "resources/",
+    "generated/",
+    "CHANGELOG.md",
+    "docs/"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/build-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build && pnpm pack --dry-run"
+    "check": "pnpm run typecheck && pnpm run build && pnpm run test && pnpm pack --dry-run"
   },
   "keywords": [
     "dsh-plugin",
@@ -107,39 +208,88 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "external": [
+        "react",
+        "react/jsx-runtime"
+      ]
     }
   },
   "dependencies": {
+    "@citation-js/core": "^0.8.2",
+    "@citation-js/plugin-bibtex": "^0.8.2",
     "decimal.js": "^10.6.0",
+    "fast-json-stable-stringify": "^2.1.0",
     "pdfjs-dist": "^6.3.289",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/schemastery": "^3.18.2",
+    "@deepseek-ai/dsh-agent": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent-presets": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-api-remotes": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-brand": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-fs": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-invariants": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-storage-domain": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-subprocess": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2"
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/schemastery": "^3.18.2",
+    "@deepseek-ai/cordis-plugin-loader": "^1.0.3",
+    "@deepseek-ai/dsh-acp-snapshot": "0.1.1-rc.2",
     "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent-loop": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent-presets": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-api-remotes": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-app-boot": "0.1.1-rc.2",
     "@deepseek-ai/dsh-brand": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.1-rc.2",
     "@deepseek-ai/dsh-fs": "0.1.1-rc.2",
     "@deepseek-ai/dsh-invariants": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
     "@deepseek-ai/dsh-loader-smoke": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.1-rc.2",
     "@deepseek-ai/dsh-storage": "0.1.1-rc.2",
     "@deepseek-ai/dsh-storage-domain": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subprocess-local": "0.1.1-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@testing-library/react": "^16.1.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.10.1",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "esbuild": "^0.28.2",
     "js-yaml": "^4.1.0",
+    "jsdom": "^30.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }

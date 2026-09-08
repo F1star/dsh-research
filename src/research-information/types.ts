@@ -1,14 +1,14 @@
 /**
  * Public durable research-information data and operation results.
- * @module @f1star/dsh-research/research-information/types
+ * @module @deepseek-ai/dsh-research-information/types
  */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { ResearchDocumentBlockLocator } from '../research-document/index.ts'
+import type { ResearchDocumentBlockLocator } from '../research-document/types.ts'
 import type {
   ResearchPaperId,
   ResearchSourceVersionId,
-} from '../research-library/index.ts'
+} from '../research-library/types.ts'
 
 /** Stable identity of one research question aggregate. */
 export type ResearchQuestionId = Branded<'ResearchQuestionId'>
@@ -16,6 +16,10 @@ export type ResearchQuestionId = Branded<'ResearchQuestionId'>
 export type ResearchEvidenceId = Branded<'ResearchEvidenceId'>
 /** Stable identity of one immutable research claim. */
 export type ResearchClaimId = Branded<'ResearchClaimId'>
+/** Stable identity of one immutable researcher assessment. */
+export type ResearchClaimReviewId = Branded<'ResearchClaimReviewId'>
+/** Stable identity of one immutable researcher assessment of a numeric observation. */
+export type ResearchObservationReviewId = Branded<'ResearchObservationReviewId'>
 /** Stable identity of one immutable synthesis. */
 export type ResearchSynthesisId = Branded<'ResearchSynthesisId'>
 /** Stable identity of one finding inside a synthesis. */
@@ -40,6 +44,102 @@ export interface ResearchAuthorship {
   readonly kind: 'researcher' | 'agent'
   readonly id: ResearchAuthorId
 }
+
+/** Researcher's assessment of the cited evidence, independent of publication truth. */
+export type ResearchEvidenceSupport = 'supports' | 'partial' | 'unsupported' | 'uncertain'
+
+/** Human decision over a claim; a revision assesses and approves the replacement. */
+export type ResearchClaimReviewDecision =
+  | { readonly decision: 'accepted' | 'rejected' }
+  | { readonly decision: 'revised'; readonly replacementClaimId: ResearchClaimId }
+
+/** Evidence-support assessment and authorship shared by researcher decisions. */
+export interface ResearchReviewAssessment {
+  readonly evidenceSupport: ResearchEvidenceSupport
+  readonly rationale: string
+  readonly qualifications?: string | undefined
+  readonly counterEvidenceIds: readonly ResearchEvidenceId[]
+  /** Aggregate revision committed with this review; orders decisions even at equal timestamps. */
+  readonly questionRevision: number
+  readonly createdBy: ResearchAuthorship
+  readonly createdAt: string
+}
+
+/** Immutable assessment history; later decisions do not erase earlier authorship or reasons. */
+export type ResearchClaimReview = ResearchClaimReviewDecision & ResearchReviewAssessment & {
+  readonly id: ResearchClaimReviewId
+  readonly claimId: ResearchClaimId
+}
+
+/** A revision approves its replacement observation while preserving the original record. */
+export type ResearchObservationReviewDecision =
+  | { readonly decision: 'accepted' | 'rejected' }
+  | { readonly decision: 'revised'; readonly replacementObservationId: ResearchObservationId }
+
+/** Immutable researcher assessment of one paper-local numeric result and its recorded conditions. */
+export type ResearchObservationReview = ResearchObservationReviewDecision & ResearchReviewAssessment & {
+  readonly id: ResearchObservationReviewId
+  readonly observationId: ResearchObservationId
+}
+
+/** Current structural and researcher assessment state; approval does not erase later source rejection. */
+export interface ResearchObservationState {
+  readonly active: boolean
+  readonly stale: boolean
+  readonly review: ResearchObservationReview | null
+  readonly rejectedClaimIds: readonly ResearchClaimId[]
+}
+
+/** Review one active observation; a revision supplies all replacement values and source references. */
+export type ReviewResearchObservationRequest = Pick<ReviewResearchClaimRequest,
+  'questionId' | 'expectedRevision' | 'evidenceSupport' | 'rationale' | 'qualifications' | 'counterEvidenceIds' | 'author'
+> & { readonly observationId: ResearchObservationId } & (
+  | { readonly decision: 'accepted' | 'rejected' }
+  | {
+    readonly decision: 'revised'
+    readonly replacement: Omit<WriteResearchObservationRequest, 'questionId' | 'expectedRevision' | 'supersedes' | 'author'>
+  }
+)
+
+/** Observation and review commit atomically; every refusal leaves both histories unchanged. */
+export type ReviewResearchObservationResult =
+  | { readonly status: 'created'; readonly question: ResearchQuestionRecord; readonly reviewId: ResearchObservationReviewId }
+  | ResearchQuestionMutationFailure
+  | ResearchObservationReferenceFailure
+  | { readonly status: 'researcher-required' }
+  | { readonly status: 'evidence-not-found'; readonly evidenceId: ResearchEvidenceId }
+  | { readonly status: 'observation-not-found' | 'observation-inactive' | 'observation-stale'; readonly observationId: ResearchObservationId }
+  | { readonly status: 'observation-rejected-claim'; readonly claimId: ResearchClaimId }
+
+/** Append a researcher decision; revisions preserve the target's kind and facet. */
+export type ReviewResearchClaimRequest = {
+  readonly questionId: ResearchQuestionId
+  readonly expectedRevision: number
+  readonly claimId: ResearchClaimId
+  readonly evidenceSupport: ResearchEvidenceSupport
+  readonly rationale: string
+  readonly qualifications?: string
+  readonly counterEvidenceIds: readonly ResearchEvidenceId[]
+  /** Trusted Consumers supply authorship; the executor rejects agent authors. */
+  readonly author: ResearchAuthorship
+} & (
+  | { readonly decision: 'accepted' | 'rejected' }
+  | {
+    readonly decision: 'revised'
+    readonly replacement: {
+      readonly text: string
+      readonly evidenceLinks: readonly ResearchClaimEvidenceLink[]
+    }
+  }
+)
+
+/** A review and any replacement commit together, or leave the aggregate unchanged. */
+export type ReviewResearchClaimResult =
+  | { readonly status: 'created'; readonly question: ResearchQuestionRecord; readonly reviewId: ResearchClaimReviewId }
+  | ResearchQuestionMutationFailure
+  | ResearchClaimReferenceFailure
+  | { readonly status: 'researcher-required' }
+  | { readonly status: 'claim-not-found' | 'claim-inactive'; readonly claimId: ResearchClaimId }
 
 /** Closed comparison facet shared by source statements and inferences. */
 export type ResearchFacet =
@@ -299,6 +399,8 @@ export interface ResearchQuestionRecord {
   readonly updatedBy: ResearchAuthorship
   readonly evidence: readonly ResearchEvidence[]
   readonly claims: readonly ResearchClaim[]
+  readonly claimReviews: readonly ResearchClaimReview[]
+  readonly observationReviews: readonly ResearchObservationReview[]
   readonly syntheses: readonly ResearchSynthesis[]
   readonly readingNotes: readonly ResearchReadingNote[]
   readonly entities: readonly ResearchEntity[]
@@ -428,6 +530,9 @@ export type ResearchInformationCapacity =
   | 'questions'
   | 'evidence'
   | 'claims'
+  | 'claim-reviews'
+  | 'observation-reviews'
+  | 'observation-review-counterevidence'
   | 'syntheses'
   | 'findings'
   | 'evidence-links'
@@ -695,6 +800,8 @@ export type ResearchComparisonDimension =
 
 /** Comparison-protocol reference failure that leaves the aggregate unchanged. */
 export type ResearchComparisonProtocolReferenceFailure =
+  | { readonly status: 'observation-rejected'; readonly observationId: ResearchObservationId }
+  | { readonly status: 'observation-rejected-claim'; readonly claimId: ResearchClaimId }
   | { readonly status: 'observation-not-found'; readonly observationId: ResearchObservationId }
   | { readonly status: 'observation-inactive'; readonly observationId: ResearchObservationId }
   | { readonly status: 'observation-stale'; readonly observationId: ResearchObservationId }

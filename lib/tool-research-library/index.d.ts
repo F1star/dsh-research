@@ -1,7 +1,7 @@
 /**
  * Model-facing tools for registering, finding, and explicitly reconciling
  * durable research-paper identities through `ctx.researchLibrary`.
- * @module @f1star/dsh-research/tool-research-library
+ * @module @deepseek-ai/dsh-tool-research-library
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';

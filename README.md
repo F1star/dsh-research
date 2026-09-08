@@ -4,7 +4,9 @@ English | [简体中文](README.zh-CN.md)
 
 `@f1star/dsh-research` is an installable [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle for evidence-first paper work. It is a DSH bundle plugin, not a Codex plugin, and runs inside an existing DSH profile.
 
-The bundle adds local native-text PDF reading, a durable paper library, and an auditable research-information workflow. It preserves exact source anchors and keeps quoted evidence distinct from authored notes, inferences, normalizations, comparison decisions, and syntheses.
+Version 0.4 adds an archived-PDF research workspace, optional OCR, human review, cited report exports, and recoverable research tasks. It preserves exact source anchors and keeps quoted evidence distinct from authored notes, inferences, normalizations, comparison decisions, and syntheses.
+
+**Upgrade warning:** 0.3 profile data cannot be opened directly by 0.4. Back up existing storage and use fresh, separate profile storage; see [upgrading](#upgrading-from-03).
 
 ## What it adds
 
@@ -13,6 +15,9 @@ The bundle adds local native-text PDF reading, a durable paper library, and an a
 | Paper reading | `paper_import`, `paper_reading_pack`, `paper_outline`, `paper_search`, and `paper_read` import a local PDF, collect bounded excerpts from recognized key sections, navigate its structure, search lexical matches, and recover exact surrounding blocks with physical-page, parser-revision, and quote-hash anchors. |
 | Paper library | `paper_library_register`, `paper_library_list`, `paper_library_get`, and `paper_library_alias` retain paper identities, bibliography provenance, exact source versions, parser observations, and reversible aliases in profile storage. |
 | Research integration | Research-question, evidence, note, claim, entity, observation, comparison-protocol, synthesis, matrix, audit, and `research_review_render` operations build a traceable record across papers. Synthesis inferences can retain explicit comparison protocols, and the renderer presents that comparison basis in review-ready Markdown without presenting authored interpretation as source text. |
+| Scientific extraction | `paper_structure` pages through located tables, formula text, and chart extraction with exact parser-revision pins. The optional Docling provider supplies OCR and generated scientific structures. |
+| Research workspace | Open Research in the Web sidebar to browse archived PDFs, retain reading positions, write notes, inspect matrices, and review claims and numeric observations as a registered researcher. |
+| Reports and tasks | Download Markdown, LaTeX, BibTeX, CSL-JSON, and provenance files. `research_task_list`, `research_task_get`, and `research_task_write` retain explicit workflow checkpoints, pause/resume state, and stale-source warnings. |
 
 This standalone bundle mounts both the research services and their model-facing tool consumers in the selected profile. Installing it is an explicit grant to every agent started through that profile: each agent can see the research tool schemas and their stable prompt guidance.
 
@@ -28,7 +33,7 @@ This standalone bundle mounts both the research services and their model-facing 
 Install the bundle into the shipped Web profile:
 
 ```sh
-dsh plugin --profile web add github:F1star/dsh-research
+dsh plugin --profile web add https://github.com/F1star/dsh-research/releases/download/v0.4.0/dsh-research.tgz
 dsh --profile web --dump-config
 dsh web
 ```
@@ -74,17 +79,19 @@ Installing this bundle into a custom profile that contains only the base bundle 
 ## Data and limitations
 
 - Paper identities, source observations, research questions, evidence, notes, claims, entities, observations, comparison protocols, and syntheses are stored in the selected profile's durable storage and can be visible across sessions using that storage.
-- Parsed PDF pages are process-local. After a restart, import the PDF again before reading blocks or capturing new evidence. The library records identities and observations, not the source PDF bytes.
-- Evidence records retain exact block text and provenance, but reconstructing an historical PDF still requires your own durable copy of the source file.
-- PDF.js extracts native text only. Scanned or image-only documents require OCR outside this bundle and do not support a text claim from the import.
+- Original PDF bytes and exact parsed revisions are archived in profile storage and can be restored after restart. Back up the complete profile storage; a paper-library record alone is not an archive backup.
+- PDF.js extracts native text only. Scanned documents need the optional [Docling setup](docs/ocr.md). OCR, formula, and chart outputs can contain recognition errors and must be verified against the original; extraction is not scientific validation.
 - Reading-pack recognition depends on extracted heading labels and approximate reading order. A missing role does not establish that the paper omits the corresponding topic.
 - Search and library matching are lexical. The bundle does not provide semantic retrieval, remote DOI or arXiv verification, automatic claim clustering, or automatic entity resolution.
 - Numeric observations and comparison protocols are authored normalizations. Linking a protocol to a synthesis inference records its explicit comparison basis; the bundle still does not silently convert units or aliases, rank results, calculate deltas, infer statistical significance, or perform meta-analysis.
-- Review rendering is a deterministic Markdown projection of retained records, not automatic literature-review generation or a formal CSL/BibTeX citation exporter. It always emits exact selection hashes and offsets, includes selected text only when explicitly requested, and otherwise emits locators instead of repeating complete evidence blocks.
+- `research_review_render` remains a deterministic Markdown projection with exact hashes, offsets, and opt-in selected text. The workspace additionally exports citation files and LaTeX through the report service; incomplete metadata and evidence remain visible as warnings. Neither path grants publication approval.
+- Task checkpoints survive restart; running agent executions never silently restart. The execution service requires an explicit trusted-client start, uses bounded steps/time/concurrency, and stops for required human review. Dedicated execution start/stop/history controls in the browser are not yet included; task creation, progress inspection, pause, and resume are included.
 
-## Upgrading from 0.2
+## Upgrading from 0.3
 
-Version 0.3 raises the `research_information` durable domain from version 4 to version 5 because every synthesis finding now stores a required comparison-protocol reference array. There is no automatic version 4-to-5 migration. Back up the selected profile's storage before updating. If it already contains version 4 research-information data, version 0.3 refuses to open that domain with a version mismatch and leaves the data untouched; pin the bundle to `v0.2.0` to access that data again. The version 1 paper-library domain is unchanged.
+Version 0.4 uses `research_library` version 2 and `research_information` version 7. Version 7 preserves standalone 0.3 synthesis comparison fields while adding human review records; it is not interchangeable with the source application's version 6. There is no automatic migration. Stop the old profile, back up its complete storage, and use separate fresh storage for 0.4. Unsupported versions fail without modifying old records; pin `v0.3.0` to reopen unchanged 0.3 data. Do not delete storage to suppress a version error. Older 0.2 data likewise requires its matching plugin version.
+
+See [architecture](docs/architecture.md) for package roles, generated browser descriptors, and execution ownership. Run `pnpm install && pnpm run check` to build and test the standalone checkout; GitHub and release installations use committed prebuilt artifacts without install-time compilation.
 
 ## Update or remove
 

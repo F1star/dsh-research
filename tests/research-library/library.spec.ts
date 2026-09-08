@@ -6,6 +6,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { ResearchDocumentId } from '../../src/research-document/index.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from '../helpers/memory-backend.ts'
 import ResearchLibrary, {
+  researchLibraryDomainSpec,
   ResearchPaperId,
   ResearchSourceVersionId,
   type Config,
@@ -99,7 +100,7 @@ function storedRecord(character: string, withSource = true): ResearchPaperRecord
 
 function poolWith(records: readonly [string, ResearchPaperRecord][]): MemoryMediaPool {
   const pool = new MemoryMediaPool()
-  pool.versions.set('research_library', 1)
+  pool.versions.set('research_library', researchLibraryDomainSpec.version)
   pool.media.set('research_library', {
     global: null,
     tables: new Map([['papers', new Map(records)]]),
@@ -185,7 +186,8 @@ describe('ResearchLibrary registration', () => {
     expect(second.paper.id).not.toBe(first.paper.id)
     expect(second.possibleDuplicateIds).toEqual([first.paper.id])
     expect(library.list().map(record => record.id)).toEqual(
-      [first.paper.id, second.paper.id].sort((left, right) => String(left).localeCompare(String(right))),
+      [first.paper, second.paper].sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+        || String(left.id).localeCompare(String(right.id))).map(record => record.id),
     )
     expect(library.get(ResearchPaperId('missing'))).toBeUndefined()
   })
@@ -522,7 +524,7 @@ describe('ResearchLibrary durability and validation', () => {
 
   it('fails loud on malformed relationships and a mismatching domain version', async () => {
     const pool = new MemoryMediaPool()
-    pool.versions.set('research_library', 1)
+    pool.versions.set('research_library', researchLibraryDomainSpec.version)
     pool.media.set('research_library', {
       global: null,
       tables: new Map([['papers', new Map([['wrong-key', {

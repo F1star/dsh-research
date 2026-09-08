@@ -1,0 +1,24 @@
+# Real Loader composition for the experimental native-text paper-reading slice.
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+
+- id: tools
+  name: '@deepseek-ai/dsh-tools'
+
+- id: fs
+  name: '@deepseek-ai/dsh-fs-local'
+  config:
+    cwd: !!js process.cwd()
+
+- id: research-document
+  name: '@deepseek-ai/dsh-research-document'
+
+- id: research-document-pdfjs
+  name: '@deepseek-ai/dsh-research-document-pdfjs'
+
+- id: tool-research-document
+  name: '@deepseek-ai/dsh-tool-research-document'
+  config:
+    maxOutlineEntries: 20
+    maxSearchResults: 10
+    maxReadBlocks: 6

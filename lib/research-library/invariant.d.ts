@@ -1,6 +1,6 @@
 /**
  * Package-owned invariant registration for the durable research library.
- * @module @f1star/dsh-research/research-library/invariant
+ * @module @deepseek-ai/dsh-research-library/invariant
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Cordis companion plugin name. */

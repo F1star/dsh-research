@@ -1,17 +1,16 @@
 /**
- * Model-facing tools for importing local PDFs and reading citeable native-text
+ * Model-facing tools for importing local PDFs and reading citeable extracted
  * evidence through `ctx.researchDocuments`.
- * @module @f1star/dsh-research/tool-research-document
+ * @module @deepseek-ai/dsh-tool-research-document
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  ResearchDocumentBlockId,
-  ResearchDocumentId,
   type ResearchDocument,
+  ResearchDocumentId,
+  ResearchDocumentBlockId,
   type ResearchDocumentBlock,
-  type ResearchDocumentBlockLocator,
   type ResearchDocumentExtraction,
   type ResearchDocumentOutlineEntry,
   type ResearchDocumentSearchHit,
@@ -19,7 +18,10 @@ import {
 import { FsError } from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { GenericCallView, JsonValue } from '@deepseek-ai/dsh-tools'
+import type { GenericCallView } from '@deepseek-ai/dsh-tools'
+import { projectStructure, STRUCTURE_SCHEMA } from './structure-schema.ts'
+import { registerStructureTool } from './structure-tool.ts'
+import { EXTRACTION_SCHEMA, LOCATOR_SCHEMA, projectLocator, taggedMeta, type ProjectedLocator } from './navigation.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-research-document'
@@ -64,6 +66,12 @@ type ReadingRole = typeof READING_ROLES[number]
 
 /** Paper tool resource and output policy. */
 export interface Config {
+  /** Maximum objects or cells per scientific page. Defaults to 100. */
+  readonly maxStructureItems?: number
+  /** Maximum Unicode code points per scientific text field or page. Defaults to 2000. */
+  readonly maxStructureTextChars?: number
+  /** Complete structured reading result byte limit, including metadata and rendered text. Defaults to 262144. */
+  readonly maxStructureOutputBytes?: number
   /** Inclusive complete-PDF byte cap. Defaults to 50 MiB. */
   readonly maxPdfBytes?: number
   /** Maximum outline entries. Defaults to 200. */
@@ -90,6 +98,9 @@ export interface Config {
 
 /** Loader schema for paper tool limits. */
 export const Config: z<Config> = z.object({
+  maxStructureItems: z.number().step(1).min(1).default(100),
+  maxStructureTextChars: z.number().step(1).min(1).default(2000),
+  maxStructureOutputBytes: z.number().step(1).min(1).default(262144),
   maxPdfBytes: z.number().step(1).min(1).default(DEFAULT_MAX_PDF_BYTES),
   maxOutlineEntries: z.number().step(1).min(1).default(DEFAULT_MAX_OUTLINE_ENTRIES),
   maxSearchResults: z.number().step(1).min(1).default(DEFAULT_MAX_SEARCH_RESULTS),
@@ -104,6 +115,11 @@ export const Config: z<Config> = z.object({
 })
 
 interface ResolvedConfig {
+  /** Maximum objects or cells per scientific page. Defaults to 100. */
+  readonly maxStructureItems: number
+  /** Maximum Unicode code points per scientific text field or page. Defaults to 2000. */
+  readonly maxStructureTextChars: number
+  readonly maxStructureOutputBytes: number
   readonly maxPdfBytes: number
   readonly maxOutlineEntries: number
   readonly maxSearchResults: number
@@ -117,17 +133,6 @@ interface ResolvedConfig {
   readonly maxReadingPackSections: number
 }
 
-interface ProjectedLocator {
-  readonly kind: 'block'
-  readonly document_id: string
-  readonly block_id: string
-  readonly parser_id: string
-  readonly parser_version: string
-  readonly page_index: number
-  readonly page_label?: string
-  readonly bbox: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
-  readonly quote_hash: string
-}
 
 interface ProjectedText {
   readonly text: string
@@ -135,6 +140,7 @@ interface ProjectedText {
 }
 
 interface ProjectedBlock extends ProjectedText {
+  readonly structure?: ReturnType<typeof projectStructure>
   readonly kind: 'heading' | 'paragraph'
   readonly heading_level?: number
   readonly section_path: string[]
@@ -143,53 +149,6 @@ interface ProjectedBlock extends ProjectedText {
   readonly locator: ProjectedLocator
 }
 
-const EXTRACTION_SCHEMA = {
-  oneOf: [
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        text: { type: 'string', required: true, const: 'native' },
-        layout: { type: 'string', required: true, const: 'approximate' },
-      },
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        text: { type: 'string', required: true, const: 'none' },
-        layout: { type: 'string', required: true, const: 'page-only' },
-      },
-    },
-  ],
-} as const
-
-const RECT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    x: { type: 'number', required: true },
-    y: { type: 'number', required: true },
-    width: { type: 'number', required: true },
-    height: { type: 'number', required: true },
-  },
-} as const
-
-const LOCATOR_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    kind: { type: 'string', required: true, const: 'block' },
-    document_id: { type: 'string', required: true },
-    block_id: { type: 'string', required: true },
-    parser_id: { type: 'string', required: true },
-    parser_version: { type: 'string', required: true },
-    page_index: { type: 'integer', required: true },
-    page_label: { type: 'string' },
-    bbox: { ...RECT_SCHEMA, required: true },
-    quote_hash: { type: 'string', required: true },
-  },
-} as const
 
 const IMPORT_OUTPUT_SCHEMA = {
   type: 'object',
@@ -261,6 +220,7 @@ const BLOCK_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    structure: STRUCTURE_SCHEMA,
     kind: { type: 'string', required: true, enum: ['heading', 'paragraph'] },
     text: { type: 'string', required: true },
     text_truncated: { type: 'boolean', required: true },
@@ -310,13 +270,17 @@ const READING_PACK_OUTPUT_SCHEMA = {
   },
 } as const
 
-/** Register paper-reading prompt guidance and five tools. */
+/**
+ * Register paper navigation and scientific-structure reading tools.
+ * @param ctx - owning plugin context.
+ * @param config - paper reading resource policy.
+ */
 export function apply(ctx: Context, config: Config): void {
   const resolved = resolveConfig(config)
   ctx.systemPrompt.section({
     name: 'tool:research-document',
     order: 112,
-    text: 'Use paper_import for a local PDF. Use paper_reading_pack for a deterministic first pass over recognized abstract, introduction, related-work, method, results, limitations, and conclusion sections; missing_roles means the parser did not recognize a matching label, not that the paper lacks that content. Use paper_outline and paper_search to navigate further, and paper_read to recover the exact surrounding evidence before making a claim. A reading pack contains source excerpts, not a generated summary. Preserve the returned document, page, block, parser-version, and quote-hash anchors in research notes. The first provider extracts only native PDF text: extraction.text=none means OCR is required and no text claim is supported by this import.',
+    text: 'Use paper_import for a local PDF. Use paper_reading_pack for a deterministic first pass over recognized abstract, introduction, related-work, method, results, limitations, and conclusion sections; missing_roles means the parser did not recognize a matching label, not that the paper lacks that content. Use paper_outline and paper_search to navigate further, and paper_read to recover the exact surrounding evidence before making a claim. A reading pack contains source excerpts, not a generated summary. Preserve the returned document, page, block, parser-version, and quote-hash anchors in research notes. The default provider extracts only native PDF text: extraction.text=none means OCR is required and no text claim is supported by this import. Use paper_structure to discover tables, formulas, and figures, including objects without OCR text. With block_id it pages cells; with field it reads complete block text, formula notation, captions, footnotes, descriptions, or cell text. Repeat the returned parser_id and parser_version on continuation calls, with next_offset for objects or cells and next_text_offset for the same selected field. Cell text continuation uses field=cell and field_index equal to the cell index. Scientific extraction remains unreviewed; recognized formulas and generated chart data are not block quotations. Paper navigation restores archived extractions without importing the original file again.',
   })
 
   ctx.tools.register(defineTool({
@@ -368,10 +332,10 @@ export function apply(ctx: Context, config: Config): void {
       presentationMeta: (_args, value) => taggedMeta('dsh/paper-outline', value),
     },
     isConcurrencySafe: () => true,
-    execute(args) {
+    async execute(args) {
       const documentId = parseDocumentId(args.document_id)
-      const document = ctx.researchDocuments.get(documentId)
-      const outline = ctx.researchDocuments.outline(documentId)
+      const document = await ctx.researchDocuments.restore(documentId)
+      const outline = ctx.researchDocuments.outline(document)
       const entries = outline.slice(0, resolved.maxOutlineEntries)
       const perEntry = perItemBudget(resolved.maxOutputTextChars, entries.length)
       return Promise.resolve({
@@ -401,12 +365,12 @@ export function apply(ctx: Context, config: Config): void {
       presentationMeta: (_args, value) => taggedMeta('dsh/paper-search', value),
     },
     isConcurrencySafe: () => true,
-    execute(args) {
+    async execute(args) {
       const documentId = parseDocumentId(args.document_id)
       const query = nonBlank('query', args.query)
       const maxResults = boundedOptionalCount('max_results', args.max_results, resolved.maxSearchResults)
-      const document = ctx.researchDocuments.get(documentId)
-      const hits = ctx.researchDocuments.search(documentId, query, maxResults + 1)
+      const document = await ctx.researchDocuments.restore(documentId)
+      const hits = ctx.researchDocuments.search(document, query, maxResults + 1)
       const retained = hits.slice(0, maxResults)
       const perHit = perItemBudget(resolved.maxOutputTextChars, retained.length)
       return Promise.resolve({
@@ -437,7 +401,7 @@ export function apply(ctx: Context, config: Config): void {
       presentationMeta: (_args, value) => taggedMeta('dsh/paper-read', value),
     },
     isConcurrencySafe: () => true,
-    execute(args) {
+    async execute(args) {
       const documentId = parseDocumentId(args.document_id)
       const blockId = parseBlockId(args.block_id)
       const before = nonNegativeOptionalCount('before', args.before, resolved.defaultReadBefore)
@@ -445,15 +409,22 @@ export function apply(ctx: Context, config: Config): void {
       if (before + after + 1 > resolved.maxReadBlocks) {
         throw new Error(`before + after + focus must be at most ${resolved.maxReadBlocks} blocks`)
       }
-      const document = ctx.researchDocuments.get(documentId)
-      const result = ctx.researchDocuments.read(documentId, blockId, before, after)
+      const document = await ctx.researchDocuments.restore(documentId)
+      const result = ctx.researchDocuments.read(document, blockId, before, after)
       const perBlock = perItemBudget(resolved.maxOutputTextChars, result.blocks.length)
-      return Promise.resolve({
+      const value = {
         document_id: documentId,
         focus_block_id: blockId,
         extraction: document.extraction,
         blocks: result.blocks.map(block => projectBlock(block, block.id === blockId, perBlock)),
-      })
+      }
+      if (value.blocks.some(block => block.structure !== undefined)) {
+        const complete = { value, content: [{ type: 'text', text: formatRead(value) }], meta: taggedMeta('dsh/paper-read', value) }
+        if (Buffer.byteLength(JSON.stringify(complete)) > resolved.maxStructureOutputBytes) {
+          throw new Error('Structured reading exceeds maxStructureOutputBytes; use paper_structure to page cells or text fields, or reduce the context window.')
+        }
+      }
+      return value
     },
     presentCall(args): GenericCallView {
       return { card: 'generic', title: `Read paper block ${shortId(args.block_id)}`, kind: 'read' }
@@ -524,10 +495,14 @@ export function apply(ctx: Context, config: Config): void {
       return { card: 'generic', title: `Build reading pack ${shortId(args.document_id)}`, kind: 'read' }
     },
   }))
+  registerStructureTool(ctx, resolved)
 }
 
 function resolveConfig(config: Config = {}): ResolvedConfig {
   const resolved: ResolvedConfig = {
+    maxStructureItems: positiveSafeInteger('maxStructureItems', config.maxStructureItems ?? 100),
+    maxStructureTextChars: positiveSafeInteger('maxStructureTextChars', config.maxStructureTextChars ?? 2000),
+    maxStructureOutputBytes: positiveSafeInteger('maxStructureOutputBytes', config.maxStructureOutputBytes ?? 262144),
     maxPdfBytes: positiveSafeInteger('maxPdfBytes', config.maxPdfBytes ?? DEFAULT_MAX_PDF_BYTES),
     maxOutlineEntries: positiveSafeInteger(
       'maxOutlineEntries', config.maxOutlineEntries ?? DEFAULT_MAX_OUTLINE_ENTRIES,
@@ -840,19 +815,6 @@ function isHighSurrogate(value: number): boolean {
   return value >= 0xD800 && value <= 0xDBFF
 }
 
-function projectLocator(locator: ResearchDocumentBlockLocator): ProjectedLocator {
-  return {
-    kind: 'block',
-    document_id: locator.documentId,
-    block_id: locator.blockId,
-    parser_id: locator.parserId,
-    parser_version: locator.parserVersion,
-    page_index: locator.pageIndex,
-    ...(locator.pageLabel !== undefined ? { page_label: locator.pageLabel } : {}),
-    bbox: { ...locator.bbox },
-    quote_hash: locator.quoteHash,
-  }
-}
 
 function projectImport(document: ResearchDocument, sourcePath: string, titleLimit: number): {
   document_id: string
@@ -896,6 +858,7 @@ function projectBlock(block: ResearchDocumentBlock, focus: boolean, textLimit: n
   const section = projectSectionPath(block.sectionPath, Math.max(0, textLimit - 1))
   return {
     kind: block.kind,
+    ...(block.structure === undefined ? {} : { structure: projectStructure(block.structure) }),
     ...projectText(block.text, textLimit - section.characters),
     ...(block.headingLevel !== undefined ? { heading_level: block.headingLevel } : {}),
     section_path: section.values,
@@ -925,9 +888,6 @@ function projectSectionPath(
   }
 }
 
-function taggedMeta(kind: string, value: JsonValue): JsonValue {
-  return { kind, version: 1, value }
-}
 
 function formatImport(value: {
   document_id: string
@@ -998,6 +958,9 @@ function formatRead(value: {
       ? ` [${block.section_path.join(' > ')}${block.section_path_truncated ? ' …' : ''}]`
       : block.section_path_truncated ? ' [section truncated]' : ''
     lines.push(`${block.focus ? 'FOCUS' : 'CONTEXT'} ${anchor(block.locator)}${section}\n${block.text}`)
+    if (block.structure !== undefined) {
+      lines.push(`Unreviewed scientific extraction (formula notation and chart data are machine interpretations, not block quotations):\n${JSON.stringify(block.structure)}`)
+    }
   }
   lines.push(`The focus block is ${value.focus_block_id}; preserve its document, parser, page, block, and quote anchors in research notes.`)
   return lines.join('\n\n')

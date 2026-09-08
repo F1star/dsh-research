@@ -12,6 +12,7 @@ import {
   type ResearchDocumentBlockLocator,
 } from '../../src/research-document/index.ts'
 import ResearchLibrary, {
+  researchLibraryDomainSpec,
   ResearchPaperId,
   ResearchSourceVersionId,
   type ResearchPaperRecord,
@@ -24,6 +25,8 @@ import ResearchInformation, {
   DEFAULT_MAX_CLAIM_REFERENCES_PER_FINDING,
   DEFAULT_MAX_OBSERVATION_REFERENCES_PER_PROTOCOL,
   ResearchAuthorId,
+  researchObservationState,
+  type ReviewResearchObservationRequest,
   ResearchClaimId,
   ResearchComparisonProtocolId,
   ResearchDecimal,
@@ -186,6 +189,7 @@ function storedQuestion(): ResearchQuestionRecord {
     updatedBy: author,
     evidence: [evidence()],
     claims: [claim()],
+    claimReviews: [], observationReviews: [],
     syntheses: [synthesis()],
     readingNotes: [],
     entities: [],
@@ -198,7 +202,7 @@ function storedQuestion(): ResearchQuestionRecord {
 
 function poolWithQuestions(records: readonly [string, ResearchQuestionRecord][] = []): MemoryMediaPool {
   const pool = new MemoryMediaPool()
-  pool.versions.set('research_library', 1)
+  pool.versions.set('research_library', researchLibraryDomainSpec.version)
   pool.media.set('research_library', {
     global: null,
     tables: new Map([['papers', new Map([
@@ -207,7 +211,7 @@ function poolWithQuestions(records: readonly [string, ResearchQuestionRecord][] 
     ])]]),
   })
   if (records.length > 0) {
-    pool.versions.set('research_information', 5)
+    pool.versions.set('research_information', 7)
     pool.media.set('research_information', {
       global: null,
       tables: new Map([['questions', new Map(records)]]),
@@ -4336,7 +4340,7 @@ describe('ResearchInformation durability and stored-state validation', () => {
     await expect(mount({ pool: mismatch })).rejects.toMatchObject({ code: 'version-mismatch' })
 
     const oldRecord = poolWithQuestions()
-    oldRecord.versions.set('research_information', 5)
+    oldRecord.versions.set('research_information', 7)
     const versionFourSource = storedQuestion()
     const {
       comparisonProtocolIds: _comparisonProtocolIds,
@@ -4366,4 +4370,256 @@ describe('ResearchInformation durability and stored-state validation', () => {
     const notStarted = new ResearchInformation(new Context())
     expect(() => notStarted.list()).toThrow(/not started yet/)
   })
+})
+
+describe('researcher claim review', () => {
+  const researcher: ResearchAuthorship = { kind: 'researcher', id: ResearchAuthorId('local-reviewer') }
+  const request = (question: ResearchQuestionRecord) => ({
+    questionId: question.id, expectedRevision: question.revision, claimId: question.claims[0]!.id,
+    decision: 'accepted' as const, evidenceSupport: 'supports' as const,
+    rationale: 'Checked against the original results paragraph.', counterEvidenceIds: [], author: researcher,
+  })
+
+  it('refuses agent decisions, stale edits, and unrelated evidence through the executor', async () => {
+    const base = storedQuestion()
+    const setup = await mount({ pool: poolWithQuestions([[base.id, base]]) })
+    try {
+      const write = request(base)
+      expect(await setup.information.reviewClaim({ ...write, author })).toEqual({ status: 'researcher-required' })
+      expect(await setup.information.reviewClaim({ ...write, expectedRevision: 0 })).toMatchObject({ status: 'stale-revision' })
+      expect(await setup.information.reviewClaim({ ...write, counterEvidenceIds: [ResearchEvidenceId('foreign')] }))
+        .toMatchObject({ status: 'evidence-not-found' })
+      expect(await setup.information.reviewClaim({ ...write, claimId: ResearchClaimId('missing') }))
+        .toMatchObject({ status: 'claim-not-found' })
+      expect(setup.information.get(base.id)).toEqual(base)
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('preserves acceptance, rejection, qualifications, counterevidence, and atomic researcher revisions after remount', async () => {
+    const base = storedQuestion()
+    const pool = poolWithQuestions([[base.id, base]])
+    const setup = await mount({ pool })
+    let final: ResearchQuestionRecord
+    try {
+      const accepted = await setup.information.reviewClaim(request(base))
+      if (accepted.status !== 'created') throw new Error(accepted.status)
+      const rejected = await setup.information.reviewClaim({ ...request(accepted.question),
+        decision: 'rejected', evidenceSupport: 'partial', rationale: 'The broader conclusion omits the evaluation conditions.',
+        qualifications: 'This finding only covers the reported dataset.', counterEvidenceIds: [base.evidence[0]!.id] })
+      if (rejected.status !== 'created') throw new Error(rejected.status)
+      const revised = await setup.information.reviewClaim({ ...request(rejected.question), decision: 'revised',
+        replacement: { text: 'The reported result applies to the evaluated dataset.', evidenceLinks: base.claims[0]!.evidenceLinks } })
+      if (revised.status !== 'created') throw new Error(revised.status)
+      final = revised.question
+      expect(final.revision).toBe(base.revision + 3)
+      expect(final.claimReviews.map(value => value.decision)).toEqual(['accepted', 'rejected', 'revised'])
+      expect(final.claimReviews[1]).toMatchObject({ evidenceSupport: 'partial', qualifications: 'This finding only covers the reported dataset.',
+        counterEvidenceIds: [base.evidence[0]!.id] })
+      expect(final.claims[0]).toEqual(base.claims[0])
+      expect(final.claims[1]).toMatchObject({ supersedes: base.claims[0]!.id, createdBy: researcher })
+      expect(final.syntheses).toEqual(base.syntheses)
+      expect(await setup.information.reviewClaim(request(final))).toMatchObject({ status: 'claim-inactive' })
+    } finally { await setup.ctx.fiber.dispose() }
+    const restored = await mount({ pool })
+    try { expect(restored.information.get(base.id)).toEqual(final!) }
+    finally { await restored.ctx.fiber.dispose() }
+  })
+
+  it('leaves both claim and review unchanged when revision validation or storage fails', async () => {
+    const base = storedQuestion()
+    const setup = await mount({ pool: poolWithQuestions([[base.id, base]]) })
+    try {
+      const write = { ...request(base), decision: 'revised' as const, replacement: { text: 'Revised claim', evidenceLinks: base.claims[0]!.evidenceLinks } }
+      expect(await setup.information.reviewClaim({ ...write, replacement: { text: 'Uncited source', evidenceLinks: [] } }))
+        .toMatchObject({ status: 'source-claim-uncited' })
+      setup.pool.failNextWrites = 1
+      await expect(setup.information.reviewClaim(write)).rejects.toThrow(/injected write failure/)
+      expect(setup.information.get(base.id)).toEqual(base)
+      expect((await setup.information.reviewClaim(write)).status).toBe('created')
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('enforces decision and text capacities before publishing either half of a revision', async () => {
+    const base = storedQuestion()
+    const setup = await mount({ pool: poolWithQuestions([[base.id, base]]), config: { maxClaimReviewsPerQuestion: 1 } })
+    try {
+      const first = await setup.information.reviewClaim(request(base))
+      if (first.status !== 'created') throw new Error(first.status)
+      expect(await setup.information.reviewClaim({ ...request(first.question), decision: 'revised',
+        replacement: { text: 'Revised', evidenceLinks: base.claims[0]!.evidenceLinks } }))
+        .toEqual({ status: 'capacity', resource: 'claim-reviews' })
+      expect(setup.information.get(base.id)).toEqual(first.question)
+    } finally { await setup.ctx.fiber.dispose() }
+    const small = await mount({ pool: poolWithQuestions([[base.id, base]]), config: { maxFieldBytes: 100 } })
+    try {
+      expect(await small.information.reviewClaim({ ...request(base), rationale: '证'.repeat(34) }))
+        .toEqual({ status: 'capacity', resource: 'field-bytes' })
+      expect(small.information.get(base.id)).toEqual(base)
+    } finally { await small.ctx.fiber.dispose() }
+  })
+
+  it('refuses malformed durable reviewer roles, references, revision order, and replacement attribution', async () => {
+    const base = storedQuestion()
+    const setup = await mount({ pool: poolWithQuestions([[base.id, base]]) })
+    let reviewed: ResearchQuestionRecord
+    try {
+      const result = await setup.information.reviewClaim({ ...request(base), decision: 'revised',
+        replacement: { text: 'Revised', evidenceLinks: base.claims[0]!.evidenceLinks } })
+      if (result.status !== 'created') throw new Error(result.status)
+      reviewed = result.question
+    } finally { await setup.ctx.fiber.dispose() }
+    const review = reviewed!.claimReviews[0]!
+    for (const invalid of [
+      { ...review, createdBy: author },
+      { ...review, claimId: ResearchClaimId('missing') },
+      { ...review, questionRevision: reviewed!.revision + 1 },
+      { ...review, decision: 'revised' as const, replacementClaimId: base.claims[0]!.id },
+      { ...review, counterEvidenceIds: [ResearchEvidenceId('missing')] },
+    ]) {
+      const record = { ...reviewed!, claimReviews: [invalid] }
+      await expect(mount({ pool: poolWithQuestions([[base.id, record]]) })).rejects.toThrow()
+    }
+  })
+})
+
+describe('researcher observation decisions', () => {
+  const reviewer = { kind: 'researcher' as const, id: ResearchAuthorId('researcher-one') }
+  const assessment = { author: reviewer, evidenceSupport: 'partial' as const, rationale: 'Checked against the reported experiment.',
+    qualifications: 'Only the stated dataset and evaluation settings.', counterEvidenceIds: [] }
+
+  it('retains rejection and atomic revision history, excludes rejected protocol members, and restores after restart', async () => {
+    const setup = await mount()
+    let final: ResearchQuestionRecord
+    try {
+      const state = await createProtocolState(setup.information)
+      const a = state.observationA.observationId
+      const b = state.observationB.observationId
+      const request = { ...assessment, questionId: state.record.id, expectedRevision: state.record.revision,
+        observationId: a, decision: 'rejected' as const }
+      const rejected = await setup.information.reviewObservation(request)
+      if (rejected.status !== 'created') throw new Error(rejected.status)
+      const original = rejected.question.observations.find(value => value.id === a)!
+      expect(researchObservationState(rejected.question, original)).toMatchObject({ active: true, stale: false,
+        review: { decision: 'rejected', createdBy: reviewer } })
+      expect(await setup.information.writeComparisonProtocol({ questionId: request.questionId,
+        expectedRevision: rejected.question.revision, observationIds: [a, b], direction: 'higher-is-better',
+        compatibilityRationale: 'A new comparison', author })).toEqual({ status: 'observation-rejected', observationId: a })
+      const revised = await setup.information.reviewObservation({ ...request, expectedRevision: rejected.question.revision,
+        decision: 'revised', replacement: { ...original, value: ResearchDecimal('85.50'), uncertainty: { status: 'not-recorded' } } })
+      if (revised.status !== 'created') throw new Error(revised.status)
+      expect(revised.question.revision).toBe(rejected.question.revision + 1)
+      expect(revised.question.observations.find(value => value.id === a)?.value).toBe('92')
+      const replacement = revised.question.observations.at(-1)!
+      expect(replacement).toMatchObject({ supersedes: a, value: '85.5', createdBy: reviewer })
+      expect(researchObservationState(revised.question, replacement)).toMatchObject({ active: true, stale: false,
+        review: { decision: 'revised', replacementObservationId: replacement.id } })
+      expect(researchObservationState(revised.question, original).active).toBe(false)
+      expect(await setup.information.reviewObservation({ ...request, expectedRevision: revised.question.revision }))
+        .toEqual({ status: 'observation-inactive', observationId: a })
+      expect(revised.question.comparisonProtocols).toEqual(state.record.comparisonProtocols)
+      const accepted = await setup.information.reviewObservation({ ...request, expectedRevision: revised.question.revision,
+        observationId: replacement.id, decision: 'accepted', counterEvidenceIds: [revised.question.evidence[0]!.id] })
+      if (accepted.status !== 'created') throw new Error(accepted.status)
+      expect(researchObservationState(accepted.question, replacement).review?.decision).toBe('accepted')
+      final = accepted.question
+    } finally { await setup.ctx.fiber.dispose() }
+    const restored = await mount({ pool: setup.pool })
+    try { expect(restored.information.get(final!.id)).toEqual(final!) }
+    finally { await restored.ctx.fiber.dispose() }
+  })
+
+  it('refuses agent approval, stale requests and invalid replacements without committing either half', async () => {
+    const setup = await mount()
+    try {
+      const state = await createComparableState(setup.information)
+      const current = state.observationB.question
+      const original = current.observations[0]!
+      const request: ReviewResearchObservationRequest = { ...assessment, questionId: current.id,
+        expectedRevision: current.revision, observationId: original.id, decision: 'revised',
+        replacement: { ...original, value: ResearchDecimal('85.5'), uncertainty: { status: 'not-recorded' } } }
+      expect(await setup.information.reviewObservation({ ...request, author })).toEqual({ status: 'researcher-required' })
+      expect(await setup.information.reviewObservation({ ...request, expectedRevision: 0 })).toMatchObject({ status: 'stale-revision' })
+      expect(await setup.information.reviewObservation({ ...request, observationId: ResearchObservationId('missing') }))
+        .toMatchObject({ status: 'observation-not-found' })
+      expect(await setup.information.reviewObservation({ ...request, counterEvidenceIds: [ResearchEvidenceId('missing')] }))
+        .toMatchObject({ status: 'evidence-not-found' })
+      expect(await setup.information.reviewObservation({ ...request, replacement: { ...request.replacement,
+        resultClaimId: ResearchClaimId('missing') } })).toMatchObject({ status: 'observation-claim-not-found' })
+      setup.pool.failNextWrites = 1
+      await expect(setup.information.reviewObservation(request)).rejects.toThrow('injected write failure')
+      expect(setup.information.get(current.id)).toEqual(current)
+      const created = await setup.information.reviewObservation(request)
+      if (created.status !== 'created') throw new Error(created.status)
+      expect(created.question.observationReviews).toHaveLength(1)
+      expect(created.question.observations).toHaveLength(3)
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('keeps historical approval but blocks fresh approval and comparison after a source claim is rejected', async () => {
+    const setup = await mount()
+    try {
+      const state = await createComparableState(setup.information)
+      const current = state.observationB.question
+      const observation = current.observations[0]!
+      const request = { ...assessment, questionId: current.id, expectedRevision: current.revision,
+        observationId: observation.id, decision: 'accepted' as const }
+      const accepted = await setup.information.reviewObservation(request)
+      if (accepted.status !== 'created') throw new Error(accepted.status)
+      const rejectedClaim = await setup.information.reviewClaim({ ...assessment, questionId: current.id,
+        expectedRevision: accepted.question.revision, claimId: observation.resultClaimId, decision: 'rejected' })
+      if (rejectedClaim.status !== 'created') throw new Error(rejectedClaim.status)
+      expect(researchObservationState(rejectedClaim.question, observation)).toMatchObject({
+        review: { decision: 'accepted' }, rejectedClaimIds: [observation.resultClaimId] })
+      expect(await setup.information.reviewObservation({ ...request, expectedRevision: rejectedClaim.question.revision }))
+        .toEqual({ status: 'observation-rejected-claim', claimId: observation.resultClaimId })
+      expect(await setup.information.writeComparisonProtocol({ questionId: current.id,
+        expectedRevision: rejectedClaim.question.revision, observationIds: current.observations.map(value => value.id),
+        direction: 'higher-is-better', compatibilityRationale: 'Compare both results', author }))
+        .toEqual({ status: 'observation-rejected-claim', claimId: observation.resultClaimId })
+      expect((await setup.information.reviewObservation({ ...request, expectedRevision: rejectedClaim.question.revision,
+        decision: 'rejected' })).status).toBe('created')
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+  it('applies result review capacities before atomic writes and rejects malformed durable decisions', async () => {
+    const builder = await mount()
+    const state = await createComparableState(builder.information)
+    const base = state.observationB.question
+    const observation = base.observations[0]!
+    await builder.ctx.fiber.dispose()
+    const request = { ...assessment, questionId: base.id, expectedRevision: base.revision,
+      observationId: observation.id, decision: 'accepted' as const }
+    const limited = await mount({ pool: poolWithQuestions([[base.id, base]]), config: {
+      maxObservationReviewsPerQuestion: 1, maxCounterEvidencePerObservationReview: 1 } })
+    let reviewed: ResearchQuestionRecord
+    try {
+      expect(await limited.information.reviewObservation({ ...request, counterEvidenceIds: base.evidence.map(value => value.id) }))
+        .toEqual({ status: 'capacity', resource: 'observation-review-counterevidence' })
+      expect(limited.information.get(base.id)).toEqual(base)
+      const result = await limited.information.reviewObservation(request)
+      if (result.status !== 'created') throw new Error(result.status)
+      reviewed = result.question
+      expect(await limited.information.reviewObservation({ ...request, expectedRevision: reviewed.revision }))
+        .toEqual({ status: 'capacity', resource: 'observation-reviews' })
+      expect(limited.information.get(base.id)).toEqual(reviewed)
+    } finally { await limited.ctx.fiber.dispose() }
+    const review = reviewed!.observationReviews[0]!
+    for (const invalid of [
+      { ...review, createdBy: author },
+      { ...review, observationId: ResearchObservationId('missing') },
+      { ...review, questionRevision: reviewed!.revision + 1 },
+      { ...review, counterEvidenceIds: [ResearchEvidenceId('missing')] },
+      { ...review, decision: 'revised' as const, replacementObservationId: observation.id },
+    ]) {
+      const record = { ...reviewed!, observationReviews: [invalid] }
+      await expect(mount({ pool: poolWithQuestions([[base.id, record]]) })).rejects.toThrow()
+    }
+    const capacity = await mount({ pool: poolWithQuestions([[base.id, base]]), config: {
+      maxAggregateBytes: Buffer.byteLength(JSON.stringify(base)) + 10 } })
+    try {
+      expect(await capacity.information.reviewObservation({ ...request, decision: 'revised', replacement: observation }))
+        .toEqual({ status: 'capacity', resource: 'aggregate-bytes' })
+      expect(capacity.information.get(base.id)).toEqual(base)
+    } finally { await capacity.ctx.fiber.dispose() }
+  })
+
 })

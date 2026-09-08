@@ -1,12 +1,12 @@
 /**
  * Package-owned invariant registration for the durable research library.
- * @module @f1star/dsh-research/research-library/invariant
+ * @module @deepseek-ai/dsh-research-library/invariant
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 
-const PACKAGE_NAME = '../research-library/index.ts'
+const PACKAGE_NAME = '@f1star/dsh-research/research-library'
 
 /** Cordis companion plugin name. */
 export const name = 'research-library-invariant'

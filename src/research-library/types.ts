@@ -1,14 +1,14 @@
 /**
  * Public data vocabulary for the durable research-paper library. Runtime id
  * factories and the service implementation live in the package root.
- * @module @f1star/dsh-research/research-library/types
+ * @module @deepseek-ai/dsh-research-library/types
  */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type {
   ResearchDocumentExtraction,
   ResearchDocumentId,
-} from '../research-document/index.ts'
+} from '../research-document/types.ts'
 
 /** Stable identity of one research work inside a profile-local library. */
 export type ResearchPaperId = Branded<'ResearchPaperId'>

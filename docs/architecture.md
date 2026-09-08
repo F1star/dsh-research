@@ -1,29 +1,22 @@
 # Architecture
 
-`@f1star/dsh-research` is one installable DSH bundle containing seven Cordis plugin entry points. The entries remain separate so each service and consumer keeps an explicit lifecycle and dependency list, while the package is self-contained for GitHub installation.
+The standalone bundle contains fourteen service/consumer entry points, thirteen mounted by default, plus a package-root discovery entry. The optional Docling provider needs explicit Python configuration. The source application and this standalone distribution remain separate releases.
 
-| Entry | Role |
+| Entries | Responsibility |
 |---|---|
-| `research-document` | Parser-neutral document service, stable document and block identifiers, cache, outline, search, and exact reads. |
-| `research-document-pdfjs` | PDF.js native-text parser registered as provider `pdfjs`. |
-| `research-library` | Durable paper identity, bibliography provenance, source versions, parser observations, and aliases. |
-| `research-information` | Durable questions, evidence, notes, claims, entities, observations, comparison protocols, and syntheses whose findings can retain explicit comparison-protocol references. |
-| `tool-research-document` | Model-facing paper import, semantic reading-pack, and exact passage-navigation tools. |
-| `tool-research-library` | Model-facing paper-library tools. |
-| `tool-research-information` | Model-facing evidence capture, structured integration, matrix, audit, and deterministic review-rendering tools. |
+| research-document, research-document-pdfjs, research-document-docling | Exact reads, native-text/geometry extraction, and optional managed Python OCR/scientific extraction. |
+| research-document-storage, research-library | Original-byte and parser-revision archives; durable identities, metadata, observations, and aliases. |
+| research-information | Questions, exact evidence, notes, claims, numeric observations, human review history, comparison protocols, and syntheses. |
+| research-report, research-workspace | Deterministic report/citation exports and trusted-client access to archives, reviews, reading positions, and tasks. |
+| research-task, research-task-runner | Durable workflow checkpoints and separately authorized, bounded, logged execution attempts. |
+| tool-research-document, tool-research-library, tool-research-information, tool-research-task | Model-facing consumers, including the retained reading pack and digest-paged review renderer. |
 
-The profile bundle patch mounts the four services first and then the three tool consumers. Service injection still controls activation; list order makes the intended ownership visible in the composed configuration.
+The patch mounts services before consumers. Installation is an explicit profile-wide research-tool grant, including the published host's minimal preset selected for task execution. The runner owns each fresh session, enforces tool and task limits, flushes its transcript before disposal, and never resumes an execution automatically after restart. Saved workflow state and saved execution attempts are separate records. Human review is a trusted-client operation, not an agent self-approval tool.
 
-Installing the bundle into a profile is an explicit profile-wide tool grant. The consumers register into that profile's global tool layer, so every agent preset started through the profile inherits the research tools. Removing the bundle withdraws both the services and those registrations on the next profile start.
+The browser entry registers the generated researchWorkspace Remote namespace before mounting its sidebar contribution. The hashes in generated/source.json identify the source descriptors used for this port; host and client descriptors are package-renamed together. Host and client use separate TypeScript programs because their Cordis declarations differ. The browser bundle uses DSH's closure-factory loader and the host's React instance.
 
-Parsed PDF blocks are process-local because the parser service is a bounded runtime cache. Durable storage contains paper identities, source observations, evidence text and anchors, and authored research records, but not the PDF bytes. This separation prevents a durable record from being mistaken for a retrievable source file.
+The archive domain is version 2, paper library version 2, research information version 7, workspace version 2, and task/execution domains version 1. Information version 7 combines source-application review records with standalone 0.3's required comparisonProtocolIds on synthesis findings. A linked finding must be an inference and retain every result claim from its referenced current protocols. No migration is implied between repositories or versions. Back up complete profile storage and use fresh separate storage for this release; unsupported formats fail without rewriting data.
 
-`paper_reading_pack` is a read-only projection over retained document blocks. It recognizes a closed set of English and Chinese semantic section labels, selects bounded source blocks without combining their text, and preserves every block locator and quote hash. The result is navigation material, not a summary; an unmatched role reports parser recognition failure rather than source-level absence.
+The reading pack returns independently anchored blocks from recognized English/Chinese section labels, not generated summaries. The review renderer projects one explicit synthesis with source/inference labels, evidence relations, bibliography warnings, and retained comparison bases. Continuations require matching digests. Report exports include the complete provenance snapshot, including superseded and rejected records; human acceptance is not publication approval.
 
-`research_review_render` is a read-only projection over one explicit active synthesis and the claims, comparison protocols, observations, evidence, and paper records it references. The renderer preserves finding kind, stance, claim kind, and every evidence relation. An inference with retained comparison-protocol references receives a `Comparison basis` drawn from those authored compatibility decisions rather than a newly computed comparison. Exact selected text requires an explicit disclosure flag, while omitted selections and unselected full blocks retain exact hashes and locators. Current runtime coverage and incomplete bibliography fields become readiness warnings. Continuation pages are bound to a digest of the complete projection, and a configurable complete-render limit fails closed before paging. The rendered Markdown is not persisted and contains no generated findings.
-
-The paper-library domain remains at version 1. The research-information domain is version 5 because every synthesis finding stores a required `comparisonProtocolIds` array. An empty array records no explicit comparison basis. A non-empty array is valid only on an inference; each referenced protocol must be active and non-stale when the synthesis is written, and the finding's claim references must include every result claim used by the protocol's observations. Later supersession leaves the immutable synthesis intact; the audit and renderer mark its comparison reference as not current. A finding retains at most 256 claim references and 64 comparison-protocol references by default; the claim limit lets one protocol at its default 256-observation limit remain usable.
-
-There is no automatic migration from research-information version 4 to version 5. A backend that contains version 4 data rejects the version 5 open without changing the stored data. Operators must back up the selected profile storage before updating; pinning the bundle to `v0.2.0` allows the unchanged version 4 data to be opened again.
-
-Internal imports between the seven entries use relative ESM paths. Official `@deepseek-ai/*` packages remain peer dependencies so the plugin resolves the DSH installation's single Cordis and service-definition instances. The package commits prebuilt `lib/` artifacts and declares no install-time lifecycle script.
+Official @deepseek-ai dependencies remain peers to share Cordis and service identities with the host. Internal research imports are relative ESM. Committed lib artifacts and the Python worker are included in release tarballs; there are no install-time lifecycle scripts. See [OCR setup](ocr.md) for the explicitly enabled Python environment.

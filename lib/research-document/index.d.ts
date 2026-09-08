@@ -1,22 +1,46 @@
 /**
  * Provider-neutral runtime for importing parsed research
  * documents and reading stable, content-derived block anchors.
- * @module @f1star/dsh-research/research-document
+ * @module @deepseek-ai/dsh-research-document
  */
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
-import { ResearchDocumentBlockId, ResearchDocumentId } from './types.ts';
-import type { ResearchDocument, ResearchDocumentOutlineEntry, ResearchDocumentParser, ResearchDocumentReadResult, ResearchDocumentSearchHit } from './types.ts';
-export type { ParsedResearchDocumentBlock, ParsedResearchDocumentPage, ResearchDocument, ResearchDocumentBlock, ResearchDocumentBlockLocator, ResearchDocumentExtraction, ResearchDocumentOutlineEntry, ResearchDocumentPage, ResearchDocumentParseRequest, ResearchDocumentParseResult, ResearchDocumentParser, ResearchDocumentReadResult, ResearchDocumentRect, ResearchDocumentSearchHit, } from './types.ts';
-export { ResearchDocumentBlockId, ResearchDocumentId, ResearchDocumentQuoteHash, } from './types.ts';
+import type { ResearchDocumentBlockId as ResearchDocumentBlockIdBrand, ResearchDocumentId as ResearchDocumentIdBrand, ResearchDocumentQuoteHash as ResearchDocumentQuoteHashBrand } from './types.ts';
+import type { ResearchDocument, ResearchDocumentArchive, ResearchDocumentBlock, ResearchDocumentOutlineEntry, ResearchDocumentParser, ResearchDocumentParserIdentity, ResearchDocumentReadResult, ResearchDocumentSearchHit, ResearchDocumentStructure } from './types.ts';
+export { researchDocumentParseResultSchema } from './schema.ts';
+export type { ParsedResearchDocumentBlock, ParsedResearchDocumentPage, ResearchDocument, ResearchDocumentArchive, ResearchDocumentBlock, ResearchDocumentBlockLocator, ResearchDocumentExtraction, ResearchDocumentOutlineEntry, ResearchDocumentPage, ResearchDocumentParseRequest, ResearchDocumentParseResult, ResearchDocumentParser, ResearchDocumentParserIdentity, ResearchDocumentReadResult, ResearchDocumentRect, ResearchDocumentSearchHit, ResearchDocumentSnapshot, ResearchDocumentStructure, ResearchDocumentTable, ResearchDocumentTableCell, } from './types.ts';
+/** Content-derived identity of one exact imported document version. */
+export type ResearchDocumentId = ResearchDocumentIdBrand;
+/**
+ * Brand an exact document content hash as a runtime document id.
+ * @param value - validated or runtime-generated document hash.
+ * @returns the same string with its document-id brand.
+ */
+export declare function ResearchDocumentId(value: string): ResearchDocumentId;
+/** Stable identity of one parsed block inside an exact document version. */
+export type ResearchDocumentBlockId = ResearchDocumentBlockIdBrand;
+/**
+ * Brand a runtime-owned block identity.
+ * @param value - validated or runtime-generated block id.
+ * @returns the same string with its block-id brand.
+ */
+export declare function ResearchDocumentBlockId(value: string): ResearchDocumentBlockId;
+/** Content hash of the complete text carried by one block anchor. */
+export type ResearchDocumentQuoteHash = ResearchDocumentQuoteHashBrand;
+/**
+ * Brand a complete block-text hash as a quote-integrity token.
+ * @param value - runtime-generated quote hash.
+ * @returns the same string with its quote-hash brand.
+ */
+export declare function ResearchDocumentQuoteHash(value: string): ResearchDocumentQuoteHash;
 declare module '@deepseek-ai/cordis' {
     interface Context {
         researchDocuments: ResearchDocumentRuntime;
     }
 }
 /** Shared runtime error codes; parser providers may add specific string codes. */
-export type ResearchDocumentErrorCode = 'RESEARCH_DOCUMENT_ABORTED' | 'RESEARCH_DOCUMENT_BLOCK_NOT_FOUND' | 'RESEARCH_DOCUMENT_DUPLICATE_PROVIDER' | 'RESEARCH_DOCUMENT_EMPTY_QUERY' | 'RESEARCH_DOCUMENT_MEDIA_TYPE_MISMATCH' | 'RESEARCH_DOCUMENT_NOT_FOUND' | 'RESEARCH_DOCUMENT_PROVIDER_AMBIGUOUS' | 'RESEARCH_DOCUMENT_PROVIDER_CONFIGURED_MISSING' | 'RESEARCH_DOCUMENT_PROVIDER_CONFIGURED_UNAVAILABLE' | 'RESEARCH_DOCUMENT_PROVIDER_UNAVAILABLE';
+export type ResearchDocumentErrorCode = 'RESEARCH_DOCUMENT_ABORTED' | 'RESEARCH_DOCUMENT_ARCHIVE_DUPLICATE' | 'RESEARCH_DOCUMENT_ARCHIVE_UNAVAILABLE' | 'RESEARCH_DOCUMENT_BLOCK_NOT_FOUND' | 'RESEARCH_DOCUMENT_DUPLICATE_PROVIDER' | 'RESEARCH_DOCUMENT_EMPTY_QUERY' | 'RESEARCH_DOCUMENT_MEDIA_TYPE_MISMATCH' | 'RESEARCH_DOCUMENT_NOT_FOUND' | 'RESEARCH_DOCUMENT_PROVIDER_AMBIGUOUS' | 'RESEARCH_DOCUMENT_PROVIDER_CONFIGURED_MISSING' | 'RESEARCH_DOCUMENT_PROVIDER_CONFIGURED_UNAVAILABLE' | 'RESEARCH_DOCUMENT_PROVIDER_UNAVAILABLE';
 /** Typed error for provider selection, lookup, cancellation, and parsing. */
 export declare class ResearchDocumentError extends HarnessError {
     readonly code: string;
@@ -39,6 +63,7 @@ export declare class ResearchDocumentRuntime extends Service {
     static Config: z<Config>;
     private readonly parsers;
     private readonly documents;
+    private archive;
     private readonly config;
     constructor(ctx: Context, config?: Config);
     /**
@@ -48,6 +73,13 @@ export declare class ResearchDocumentRuntime extends Service {
      * @returns contribution disposer.
      */
     registerParser(parser: ResearchDocumentParser): () => void;
+    /**
+     * Register the sole archive provider. Its owner must dispose this contribution
+     * before closing its storage. An absent archive keeps imports process-local.
+     * @param archive - durable source and parser-result provider.
+     * @returns contribution disposer.
+     */
+    registerArchive(archive: ResearchDocumentArchive): () => void;
     /**
      * Parse and retain one exact byte sequence. Re-importing retained bytes
      * returns the same retained value without invoking a parser again.
@@ -59,6 +91,21 @@ export declare class ResearchDocumentRuntime extends Service {
         readonly bytes: Uint8Array;
         readonly mediaType: string;
     }, signal?: AbortSignal): Promise<ResearchDocument>;
+    /**
+     * Restore a missing document from its saved parser output. No parser or original
+     * source path is needed. Selecting a historical revision replaces the cached
+     * revision for this document; old block ids are never remapped to new content.
+     * @param documentId - exact imported content id.
+     * @param parser - optional exact historical extraction revision.
+     * @returns retained document with the original block ids and quote hashes.
+     */
+    restore(documentId: ResearchDocumentId, parser?: ResearchDocumentParserIdentity): Promise<ResearchDocument>;
+    /**
+     * Read exact archived source bytes for a document viewer or export.
+     * @param documentId - exact imported content id.
+     * @returns an owned copy of the saved source bytes.
+     */
+    source(documentId: ResearchDocumentId): Promise<Uint8Array>;
     /**
      * Read one retained document and refresh its LRU position.
      * @param documentId - exact imported version id.
@@ -75,27 +122,36 @@ export declare class ResearchDocumentRuntime extends Service {
     peek(documentId: ResearchDocumentId): ResearchDocument | undefined;
     /**
      * Return all parsed heading blocks in reading order.
-     * @param documentId - exact imported version id.
+     * @param document - retained id or restored snapshot; snapshots remain readable after cache eviction.
      * @returns deterministic outline entries.
      */
-    outline(documentId: ResearchDocumentId): readonly ResearchDocumentOutlineEntry[];
+    outline(document: ResearchDocumentId | ResearchDocument): readonly ResearchDocumentOutlineEntry[];
+    /**
+     * Return scientific blocks in reading order, including blocks without OCR text.
+     * @param document - retained id or restored snapshot; snapshots survive cache eviction.
+     * @param kind - optional table, formula, or figure filter.
+     * @returns source-owned blocks with their complete structures and exact locators.
+     */
+    structures(document: ResearchDocumentId | ResearchDocument, kind?: ResearchDocumentStructure['kind']): readonly (ResearchDocumentBlock & {
+        readonly structure: ResearchDocumentStructure;
+    })[];
     /**
      * Search retained block text using deterministic phrase-and-term scoring.
-     * @param documentId - exact imported version id.
+     * @param document - retained id or restored snapshot; snapshots remain readable after cache eviction.
      * @param query - non-empty phrase or terms.
      * @param maxResults - positive caller-owned result bound.
      * @returns strongest hits, then reading order.
      */
-    search(documentId: ResearchDocumentId, query: string, maxResults: number): readonly ResearchDocumentSearchHit[];
+    search(document: ResearchDocumentId | ResearchDocument, query: string, maxResults: number): readonly ResearchDocumentSearchHit[];
     /**
      * Return a block window around one exact anchor.
-     * @param documentId - exact imported version id.
+     * @param document - retained id or restored snapshot; snapshots remain readable after cache eviction.
      * @param blockId - focus block.
      * @param before - number of preceding blocks.
      * @param after - number of following blocks.
      * @returns ordered window including the focus block.
      */
-    read(documentId: ResearchDocumentId, blockId: ResearchDocumentBlockId, before: number, after: number): ResearchDocumentReadResult;
+    read(document: ResearchDocumentId | ResearchDocument, blockId: ResearchDocumentBlockId, before: number, after: number): ResearchDocumentReadResult;
     private resolveParser;
     private touch;
     private evictOverLimit;

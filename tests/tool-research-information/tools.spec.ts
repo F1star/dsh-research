@@ -8,6 +8,7 @@ import ResearchDocumentRuntime, {
 } from '../../src/research-document/index.ts'
 import ResearchInformation, {
   ResearchClaimId,
+  ResearchAuthorId,
   ResearchComparisonProtocolId,
   ResearchEntityId,
   ResearchEvidenceId,
@@ -1436,6 +1437,28 @@ describe('research-information tool composition', () => {
     ])
     expect(protocolBacked.map(observation => observation.value)).toEqual(['90', '80', '92'])
 
+    const reviewBase = { questionId: ResearchQuestionId(created.questionId), observationId: ResearchObservationId(alphaObservationId),
+      evidenceSupport: 'unsupported' as const, rationale: 'The chart value requires correction.', counterEvidenceIds: [],
+      author: { kind: 'researcher' as const, id: ResearchAuthorId('chart-reviewer') } }
+    const rejectedResult = await setup.ctx.researchInformation.reviewObservation({ ...reviewBase, expectedRevision: revision, decision: 'rejected' })
+    if (rejectedResult.status !== 'created') throw new Error(rejectedResult.status)
+    revision = rejectedResult.question.revision
+    expect(value(await setup.call('research_question_get', { question_id: created.questionId, view: 'comparisons' })))
+      .toMatchObject({ comparison_protocols: [{ stale: false, review_blocked: true,
+        review_blocked_observation_ids: [alphaObservationId], compatibility_status: 'not-current' }] })
+    expect(value(await setup.call('research_question_get', { question_id: created.questionId, view: 'observations', observation_id: alphaObservationId })))
+      .toMatchObject({ observations: [{ review_status: 'rejected', comparison_status: 'not-established',
+        latest_review: { rationale: reviewBase.rationale, created_by: 'researcher:chart-reviewer' } }] })
+    expect(value(await setup.call('research_comparison_protocol_write', { question_id: created.questionId, revision,
+      observation_ids: [alphaObservationId, betaObservationId], direction: 'higher-is-better', compatibility_rationale: 'Same conditions' })))
+      .toMatchObject({ status: 'observation-rejected', observation_id: alphaObservationId })
+    const acceptedResult = await setup.ctx.researchInformation.reviewObservation({ ...reviewBase, expectedRevision: revision,
+      evidenceSupport: 'supports', decision: 'accepted', rationale: 'The source was checked again.' })
+    if (acceptedResult.status !== 'created') throw new Error(acceptedResult.status)
+    revision = acceptedResult.question.revision
+    expect(value(await setup.call('research_question_get', { question_id: created.questionId, view: 'comparisons' })))
+      .toMatchObject({ comparison_protocols: [{ review_blocked: false, compatibility_status: 'established-by-active-protocol' }] })
+
     const alphaPeerObservationId = await writeObservation({
       paper: alpha,
       methodEntityId: alphaMethodId,
@@ -1907,7 +1930,7 @@ describe('research-information tool composition', () => {
     }
     expect(decimalPages.length).toBeGreaterThan(1)
     expect(decimalParts.join('')).toBe(exactDecimal)
-    expect(revision).toBe(30)
+    expect(revision).toBe(32)
     const replacementDataset = value(await setup.call('research_entity_write', {
       question_id: created.questionId,
       revision,
@@ -4475,4 +4498,39 @@ describe('research-information tool composition', () => {
     toolRegister.mockRestore()
     await dispose(setup)
   })
+})
+
+it('projects human rejection and replacement approval through the logged question tool', async () => {
+  const setup = await mount()
+  try {
+    const question = await createQuestion(setup)
+    const written = value(await setup.call('research_claim_write', {
+      question_id: question.questionId, revision: question.revision,
+      kind: 'inference', facet: 'result', text: 'A candidate inference', evidence_links: [],
+    }))
+    const initial = value(await setup.call('research_question_get', { question_id: question.questionId }))
+    expect(initial).toMatchObject({ claims: [{ active: true, review_status: 'unreviewed' }] })
+    const current = setup.ctx.researchInformation.get(ResearchQuestionId(question.questionId))!
+    const rejected = await setup.ctx.researchInformation.reviewClaim({ questionId: current.id, expectedRevision: current.revision,
+      claimId: ResearchClaimId(written.claim_id as string), decision: 'rejected', evidenceSupport: 'unsupported',
+      rationale: 'The captured material does not support this inference.', qualifications: 'Needs a controlled comparison.', counterEvidenceIds: [],
+      author: { kind: 'researcher', id: ResearchAuthorId('local-reviewer') } })
+    if (rejected.status !== 'created') throw new Error(rejected.status)
+    const afterRejection = value(await setup.call('research_question_get', { question_id: current.id }))
+    expect(afterRejection).toMatchObject({ claims: [{ active: true, review_status: 'rejected', latest_review: {
+      decision: 'rejected', evidence_support: 'unsupported', rationale: 'The captured material does not support this inference.',
+      qualifications: 'Needs a controlled comparison.', created_by: 'researcher:local-reviewer',
+    } }] })
+    const revised = await setup.ctx.researchInformation.reviewClaim({ questionId: current.id, expectedRevision: rejected.question.revision,
+      claimId: ResearchClaimId(written.claim_id as string), decision: 'revised', evidenceSupport: 'uncertain',
+      rationale: 'Retain it only as an open hypothesis.', counterEvidenceIds: [],
+      replacement: { text: 'A hypothesis requiring further evidence', evidenceLinks: [] },
+      author: { kind: 'researcher', id: ResearchAuthorId('local-reviewer') } })
+    if (revised.status !== 'created') throw new Error(revised.status)
+    const output = value(await setup.call('research_question_get', { question_id: current.id }))
+    expect(output).toMatchObject({ claims: [
+      { active: false, review_status: 'replaced', latest_review: { decision: 'revised' } },
+      { active: true, review_status: 'accepted-after-revision', latest_review: { evidence_support: 'uncertain' } },
+    ] })
+  } finally { await dispose(setup) }
 })

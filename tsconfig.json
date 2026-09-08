@@ -19,7 +19,13 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "paths": {
+      "@f1star/dsh-research/types": ["./src/research-workspace/types.ts"],
+      "@f1star/dsh-research/*/types": ["./src/*/types.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/browser.ts", "src/ui"]
 }

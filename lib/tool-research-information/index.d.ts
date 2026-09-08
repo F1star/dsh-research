@@ -2,7 +2,7 @@
  * Model-facing tools for durable research questions, exact evidence, authored
  * reading notes, claims, normalized entities, comparison matrices, provenance audits,
  * and cited synthesis.
- * @module @f1star/dsh-research/tool-research-information
+ * @module @deepseek-ai/dsh-tool-research-information
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';

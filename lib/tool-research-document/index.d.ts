@@ -1,7 +1,7 @@
 /**
- * Model-facing tools for importing local PDFs and reading citeable native-text
+ * Model-facing tools for importing local PDFs and reading citeable extracted
  * evidence through `ctx.researchDocuments`.
- * @module @f1star/dsh-research/tool-research-document
+ * @module @deepseek-ai/dsh-tool-research-document
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
@@ -33,6 +33,12 @@ export declare const DEFAULT_MAX_READING_PACK_BLOCKS_PER_SECTION = 14;
 export declare const DEFAULT_MAX_READING_PACK_SECTIONS = 7;
 /** Paper tool resource and output policy. */
 export interface Config {
+    /** Maximum objects or cells per scientific page. Defaults to 100. */
+    readonly maxStructureItems?: number;
+    /** Maximum Unicode code points per scientific text field or page. Defaults to 2000. */
+    readonly maxStructureTextChars?: number;
+    /** Complete structured reading result byte limit, including metadata and rendered text. Defaults to 262144. */
+    readonly maxStructureOutputBytes?: number;
     /** Inclusive complete-PDF byte cap. Defaults to 50 MiB. */
     readonly maxPdfBytes?: number;
     /** Maximum outline entries. Defaults to 200. */
@@ -58,6 +64,10 @@ export interface Config {
 }
 /** Loader schema for paper tool limits. */
 export declare const Config: z<Config>;
-/** Register paper-reading prompt guidance and five tools. */
+/**
+ * Register paper navigation and scientific-structure reading tools.
+ * @param ctx - owning plugin context.
+ * @param config - paper reading resource policy.
+ */
 export declare function apply(ctx: Context, config: Config): void;
 //# sourceMappingURL=index.d.ts.map

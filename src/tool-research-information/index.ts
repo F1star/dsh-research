@@ -2,7 +2,7 @@
  * Model-facing tools for durable research questions, exact evidence, authored
  * reading notes, claims, normalized entities, comparison matrices, provenance audits,
  * and cited synthesis.
- * @module @f1star/dsh-research/tool-research-information
+ * @module @deepseek-ai/dsh-tool-research-information
  */
 
 import { Buffer } from 'node:buffer'
@@ -17,6 +17,10 @@ import {
 } from '../research-document/index.ts'
 import {
   ResearchAuthorId,
+  researchObservationState,
+  type ResearchObservationState,
+  type ResearchObservationReview,
+  type ResearchReviewAssessment,
   ResearchClaimId,
   ResearchComparisonProtocolId,
   ResearchDecimal,
@@ -29,6 +33,7 @@ import {
   ResearchSynthesisId,
   type CaptureResearchEvidenceResult,
   type ResearchClaim,
+  type ResearchClaimReview,
   type ResearchComparisonProtocol,
   type ResearchEntity,
   type ResearchEntityKind,
@@ -269,6 +274,8 @@ const MUTATION_OUTPUT_SCHEMA = {
         'supersedes-observation-paper-mismatch',
         'observation-not-found',
         'observation-inactive',
+        'observation-rejected',
+        'observation-rejected-claim',
         'observation-stale',
         'comparison-insufficient-papers',
         'comparison-field-not-recorded',
@@ -440,6 +447,43 @@ const CLAIM_LINK_SCHEMA = {
   },
 } as const
 
+const REVIEW_ASSESSMENT_PROPERTIES = {
+  evidence_support: { type: 'string', enum: ['supports', 'partial', 'unsupported', 'uncertain'], required: true },
+  rationale: { type: 'string', required: true },
+  rationale_truncated: { type: 'boolean', required: true },
+  qualifications: { type: 'string' },
+  qualifications_truncated: { type: 'boolean' },
+  counter_evidence_ids: { type: 'array', items: { type: 'string' }, required: true },
+  total_counter_evidence: { type: 'integer', required: true },
+  counter_evidence_ids_truncated: { type: 'boolean', required: true },
+  question_revision: { type: 'integer', required: true },
+  created_by: { type: 'string', required: true },
+  created_by_truncated: { type: 'boolean', required: true },
+  created_at: { type: 'string', required: true },
+} as const
+
+const CLAIM_REVIEW_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    review_id: { type: 'string', required: true },
+    claim_id: { type: 'string', required: true },
+    decision: { type: 'string', enum: ['accepted', 'rejected', 'revised'], required: true },
+    replacement_claim_id: { type: 'string' },
+    ...REVIEW_ASSESSMENT_PROPERTIES,
+  },
+} as const
+
+const OBSERVATION_REVIEW_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    review_id: { type: 'string', required: true },
+    observation_id: { type: 'string', required: true },
+    decision: { type: 'string', enum: ['accepted', 'rejected', 'revised'], required: true },
+    replacement_observation_id: { type: 'string' },
+    ...REVIEW_ASSESSMENT_PROPERTIES,
+  },
+} as const
+
 const CLAIM_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -456,6 +500,8 @@ const CLAIM_SCHEMA = {
     evidence_links_truncated: { type: 'boolean', required: true },
     supersedes_claim_id: { type: 'string' },
     active: { type: 'boolean', required: true },
+    review_status: { type: 'string', enum: ['unreviewed', 'accepted', 'rejected', 'replaced', 'accepted-after-revision'], required: true },
+    latest_review: CLAIM_REVIEW_SCHEMA,
     created_by: { type: 'string', required: true },
     created_by_truncated: { type: 'boolean', required: true },
     created_at: { type: 'string', required: true },
@@ -580,6 +626,12 @@ const OBSERVATION_SCHEMA = {
     content_role: { type: 'string', required: true, enum: ['authored-normalization'] },
     active: { type: 'boolean', required: true },
     stale: { type: 'boolean', required: true },
+    review_status: { type: 'string', required: true,
+      enum: ['unreviewed', 'accepted', 'rejected', 'replaced', 'accepted-after-revision'] },
+    latest_review: OBSERVATION_REVIEW_SCHEMA,
+    rejected_source_claim_ids: { type: 'array', required: true, items: { type: 'string' } },
+    total_rejected_source_claims: { type: 'integer', required: true },
+    rejected_source_claim_ids_truncated: { type: 'boolean', required: true },
     comparison_status: {
       type: 'string', required: true, enum: ['not-established', 'protocol-backed'],
     },
@@ -650,6 +702,10 @@ const COMPARISON_PROTOCOL_SCHEMA = {
     },
     active: { type: 'boolean', required: true },
     stale: { type: 'boolean', required: true },
+    review_blocked: { type: 'boolean', required: true },
+    review_blocked_observation_ids: { type: 'array', required: true, items: { type: 'string' } },
+    total_review_blocked_observations: { type: 'integer', required: true },
+    review_blocked_observation_ids_truncated: { type: 'boolean', required: true },
     compatibility_status: {
       type: 'string',
       required: true,
@@ -1010,6 +1066,8 @@ type OverviewItem =
   | { readonly kind: 'synthesis'; readonly value: ResearchSynthesis }
 
 type ObservationAlignmentBlocker =
+  | 'researcher-rejected'
+  | 'rejected-source-claim'
   | 'inactive'
   | 'stale-reference'
   | 'unit-not-recorded'
@@ -1085,6 +1143,8 @@ interface ObservationCandidateBucket {
 }
 
 interface ObservationProjectionState {
+  readonly assessments: ReadonlyMap<ReturnType<typeof ResearchObservationId>, ResearchObservationState>
+  readonly reviewBlockedObservations: ReadonlySet<ReturnType<typeof ResearchObservationId>>
   readonly activeClaims: ReadonlySet<ReturnType<typeof ResearchClaimId>>
   readonly activeEntities: ReadonlySet<ReturnType<typeof ResearchEntityId>>
   readonly activeObservations: ReadonlySet<ReturnType<typeof ResearchObservationId>>
@@ -1127,7 +1187,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.systemPrompt.section({
     name: 'tool:research-information',
     order: 114,
-    text: 'Create a research question before capturing evidence. Use paper_import, paper_library_register, and paper_read before research_evidence_capture; pass only document_id, block_id, and an optional exact quote because paper identity, parser provenance, page location, and hashes are derived from the retained runtime document. After capture, use research_note_write for authored notes or passage questions anchored to that evidence. A reading note is authored commentary, not a source statement; write a separate research_claim_write claim before using the material in a matrix, normalized entity, observation, comparison protocol, or synthesis. Record source statements separately from agent inferences, and never present an uncited inference as a source claim. Use research_entity_write to normalize active evidence-backed source statements whose facet matches method, dataset, or metric. An entity canonical name is authored normalization, not source text. Grouping claims under one entity records concept coreference only; it does not mean a paper adopts or endorses the entity, and it does not mean the claims agree. Use research_observation_write only for one paper-local result whose result, method, dataset, metric, split, evaluation-protocol, and condition references are explicitly recorded. Observation values, units, statistics, uncertainty, roles, and context are authored normalization, not quotations. A not-recorded unit, split, protocol, condition set, or uncertainty means the harness has not retained that fact; it never means zero, absent, or not reported by the paper. Use not-applicable only as a positive authored assertion: for unit it means dimensionless, and for split, evaluation protocol, conditions, or uncertainty it means the concept genuinely does not apply. The observations view lists raw observations in insertion order and may expose exact structural-alignment candidates, but a candidate is not a compatibility decision. Never convert units or aliases, average, calculate a delta, rank results, or infer statistical significance from raw observations or candidates. Only an active, non-stale research_comparison_protocol_write record explicitly authorizes describing its selected observations as compatible under its authored rationale; even then, statistical significance remains unassessed. Use research_question_get with view=notes to review notes in reading order, view=entities to retrieve normalized cross-paper groups, view=observations for raw normalized measurements, view=comparisons for explicit compatibility decisions, view=matrix to compare facets across papers, and view=audit to expose missing coverage, stale references, reimport requirements, unnormalized source claims, and uncited inference. Source-summary synthesis findings must cite active evidence-backed source-statement claims; a missing matrix cell means no captured source statement, not contrary evidence. Use research_review_render only with an explicit active synthesis id after checking the audit view. It deterministically renders stored findings, claims, evidence relations, exact anchors, and bibliography metadata as Markdown; it never writes state or generates new research prose. Selected quote text is omitted unless include_selected_quotes=true. Treat ready-with-warnings as requiring review before publication. Item and reference paging is deterministic: when a get result omits items or references, continue with the applicable offset, finding_offset, or reference_offset while preserving the same view and filters. Note text, selected observation decimals, and rendered review Markdown have continuation cursors. To follow a note next_text_offset, repeat the same question_id, view=notes, evidence_id filter, and item offset with max_items=1. To recover an exact decimal whose projection is truncated, repeat the exact observation filter, max_items=1, decimal_field, and next_decimal_text_offset. To follow a review next_text_offset, repeat the same question_id, synthesis_id, include_selected_quotes value, and render_digest. Other truncated text, including entity canonical names, observation context, and comparison rationale, has no text cursor.',
+    text: 'Create a research question before capturing evidence. Use paper_import, paper_library_register, and paper_read before research_evidence_capture; pass only document_id, block_id, and an optional exact quote because paper identity, parser provenance, page location, and hashes are derived from the retained runtime document. After capture, use research_note_write for authored notes or passage questions anchored to that evidence. A reading note is authored commentary, not a source statement; write a separate research_claim_write claim before using the material in a matrix, normalized entity, observation, comparison protocol, or synthesis. Record source statements separately from agent inferences, and never present an uncited inference as a source claim. Use research_entity_write to normalize active evidence-backed source statements whose facet matches method, dataset, or metric. An entity canonical name is authored normalization, not source text. Grouping claims under one entity records concept coreference only; it does not mean a paper adopts or endorses the entity, and it does not mean the claims agree. Use research_observation_write only for one paper-local result whose result, method, dataset, metric, split, evaluation-protocol, and condition references are explicitly recorded. Observation values, units, statistics, uncertainty, roles, and context are authored normalization, not quotations. A not-recorded unit, split, protocol, condition set, or uncertainty means the harness has not retained that fact; it never means zero, absent, or not reported by the paper. Use not-applicable only as a positive authored assertion: for unit it means dimensionless, and for split, evaluation protocol, conditions, or uncertainty it means the concept genuinely does not apply. The observations view lists raw observations in insertion order and may expose exact structural-alignment candidates, but a candidate is not a compatibility decision. Never convert units or aliases, average, calculate a delta, rank results, or infer statistical significance from raw observations or candidates. Only an active, non-stale research_comparison_protocol_write record with review_blocked=false explicitly authorizes describing its selected observations as compatible under its authored rationale; even then, statistical significance remains unassessed. Inspect observation review_status, latest_review, and rejected_source_claim_ids before using a result. Researcher rejection blocks comparison even when source versions remain current; later rejection of a supporting claim does not erase historical result approval. Before presenting a claim as researcher-approved, inspect its overview review_status and latest_review. An active claim may be rejected or unreviewed; human acceptance and evidence_support are distinct, and revisions approve the replacement only. Use research_question_get with view=notes to review notes in reading order, view=entities to retrieve normalized cross-paper groups, view=observations for raw normalized measurements, view=comparisons for explicit compatibility decisions, view=matrix to compare facets across papers, and view=audit to expose missing coverage, stale references, reimport requirements, unnormalized source claims, and uncited inference. Source-summary synthesis findings must cite active evidence-backed source-statement claims; a missing matrix cell means no captured source statement, not contrary evidence. Use research_review_render only with an explicit active synthesis id after checking the audit view. It deterministically renders stored findings, claims, evidence relations, exact anchors, and bibliography metadata as Markdown; it never writes state or generates new research prose. Selected quote text is omitted unless include_selected_quotes=true. Treat ready-with-warnings as requiring review before publication. Item and reference paging is deterministic: when a get result omits items or references, continue with the applicable offset, finding_offset, or reference_offset while preserving the same view and filters. Note text, selected observation decimals, and rendered review Markdown have continuation cursors. To follow a note next_text_offset, repeat the same question_id, view=notes, evidence_id filter, and item offset with max_items=1. To recover an exact decimal whose projection is truncated, repeat the exact observation filter, max_items=1, decimal_field, and next_decimal_text_offset. To follow a review next_text_offset, repeat the same question_id, synthesis_id, include_selected_quotes value, and render_digest. Other truncated text, including entity canonical names, observation context, and comparison rationale, has no text cursor.',
   })
   ctx.systemPrompt.section({
     name: 'tool:research-comparison-synthesis',
@@ -1547,7 +1607,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       const evidenceProjection = budget.items(evidenceValues)
       const claimProjection = budget.items(claimValues)
       const evidence = evidenceProjection.values.map(value => projectEvidence(value, budget))
-      const claims = claimProjection.values.map(value => projectClaim(value, activeClaims.has(value.id), budget))
+      const claims = claimProjection.values.map(value => projectClaim(value, activeClaims.has(value.id), question, budget))
       const syntheses = synthesisValues.map(value =>
         projectSynthesis(value, activeSyntheses.has(value.id), budget, findingOffset))
       const summary = projectQuestionSummary(question, budget)
@@ -2366,6 +2426,8 @@ function projectMutationFailure(
         claim_facet: result.claimFacet,
         truncated: false,
       }
+    case 'observation-rejected-claim':
+      return { status: result.status, claim_id: result.claimId, truncated: false }
     case 'observation-claim-not-found':
     case 'observation-claim-inactive':
     case 'observation-claim-kind-mismatch':
@@ -2433,6 +2495,7 @@ function projectMutationFailure(
     case 'supersedes-observation-inactive':
     case 'supersedes-observation-paper-mismatch':
     case 'observation-not-found':
+    case 'observation-rejected':
     case 'observation-inactive':
     case 'observation-stale':
     case 'reference-observation-not-member':
@@ -2661,7 +2724,9 @@ function projectReadingNote(
   }
 }
 
-function projectClaim(claim: ResearchClaim, active: boolean, budget: ProjectionBudget): ProjectedClaim {
+function projectClaim(claim: ResearchClaim, active: boolean, question: ResearchQuestionRecord, budget: ProjectionBudget): ProjectedClaim {
+  const review = question.claimReviews.findLast(value => value.claimId === claim.id
+    || (value.decision === 'revised' && value.replacementClaimId === claim.id))
   const text = budget.text(claim.text)
   const otherFacet = claim.otherFacet === undefined ? undefined : budget.text(claim.otherFacet)
   const evidenceLinks = budget.references(claim.evidenceLinks)
@@ -2683,9 +2748,38 @@ function projectClaim(claim: ResearchClaim, active: boolean, budget: ProjectionB
     evidence_links_truncated: evidenceLinks.truncated,
     ...(claim.supersedes === undefined ? {} : { supersedes_claim_id: claim.supersedes }),
     active,
+    review_status: review === undefined ? 'unreviewed' : review.decision === 'revised'
+      ? review.claimId === claim.id ? 'replaced' : 'accepted-after-revision' : review.decision,
+    ...(review === undefined ? {} : { latest_review: projectClaimReview(review, budget) }),
     ...createdBy,
     created_at: claim.createdAt,
   }
+}
+
+function projectReviewAssessment(review: ResearchReviewAssessment, budget: ProjectionBudget) {
+  const rationale = budget.text(review.rationale)
+  const qualifications = review.qualifications === undefined ? undefined : budget.text(review.qualifications)
+  const counterEvidence = budget.references(review.counterEvidenceIds)
+  return {
+    evidence_support: review.evidenceSupport, rationale: rationale.value, rationale_truncated: rationale.truncated,
+    ...(qualifications === undefined ? {} : { qualifications: qualifications.value, qualifications_truncated: qualifications.truncated }),
+    counter_evidence_ids: counterEvidence.values.map(String), total_counter_evidence: review.counterEvidenceIds.length,
+    counter_evidence_ids_truncated: counterEvidence.truncated, question_revision: review.questionRevision,
+    ...projectCreatedBy(review.createdBy, budget), created_at: review.createdAt,
+  }
+}
+
+function projectClaimReview(review: ResearchClaimReview, budget: ProjectionBudget): InferValue<typeof CLAIM_REVIEW_SCHEMA> {
+  return { review_id: review.id, claim_id: review.claimId, decision: review.decision,
+    ...(review.decision === 'revised' ? { replacement_claim_id: review.replacementClaimId } : {}),
+    ...projectReviewAssessment(review, budget) }
+}
+
+function projectObservationReview(review: ResearchObservationReview,
+  budget: ProjectionBudget): InferValue<typeof OBSERVATION_REVIEW_SCHEMA> {
+  return { review_id: review.id, observation_id: review.observationId, decision: review.decision,
+    ...(review.decision === 'revised' ? { replacement_observation_id: review.replacementObservationId } : {}),
+    ...projectReviewAssessment(review, budget) }
 }
 
 function projectEntity(
@@ -2751,6 +2845,9 @@ function projectEntity(
 }
 
 function observationProjectionState(record: ResearchQuestionRecord): ObservationProjectionState {
+  const assessments = new Map(record.observations.map(observation => [observation.id, researchObservationState(record, observation)]))
+  const reviewBlockedObservations = new Set([...assessments].filter(([, value]) =>
+    value.review?.decision === 'rejected' || value.rejectedClaimIds.length > 0).map(([id]) => id))
   const activeClaims = activeClaimIds(record)
   const activeEntities = activeEntityIds(record)
   const activeObservations = activeObservationIds(record)
@@ -2792,7 +2889,8 @@ function observationProjectionState(record: ResearchQuestionRecord): Observation
     readonly positionsByPaper: Map<ResearchPaperId, number[]>
   }>()
   for (const observation of record.observations) {
-    if (!activeObservations.has(observation.id) || staleObservationIds.has(observation.id)) continue
+    if (!activeObservations.has(observation.id) || staleObservationIds.has(observation.id)
+      || reviewBlockedObservations.has(observation.id)) continue
     if (observationIntrinsicBlockers(observation).length > 0) continue
     const signature = observationAlignmentSignature(observation)
     let bucket = candidateBuckets.get(signature)
@@ -2827,6 +2925,9 @@ function observationProjectionState(record: ResearchQuestionRecord): Observation
     const blockers: ObservationAlignmentBlocker[] = []
     if (!activeObservations.has(observation.id)) blockers.push('inactive')
     if (staleObservationIds.has(observation.id)) blockers.push('stale-reference')
+    const assessment = projectionIndexValue(assessments, observation.id, 'observation assessment')
+    if (assessment.review?.decision === 'rejected') blockers.push('researcher-rejected')
+    if (assessment.rejectedClaimIds.length > 0) blockers.push('rejected-source-claim')
     blockers.push(...observationIntrinsicBlockers(observation))
     const bucket = blockers.length === 0
       ? projectionIndexValue(
@@ -2860,13 +2961,15 @@ function observationProjectionState(record: ResearchQuestionRecord): Observation
     const stale = protocol.observationIds.some(observationId =>
       !activeObservations.has(observationId) || staleObservationIds.has(observationId))
     if (stale) staleComparisonProtocolIds.add(protocol.id)
-    if (!activeComparisonProtocols.has(protocol.id) || stale) continue
+    if (!activeComparisonProtocols.has(protocol.id) || stale
+      || protocol.observationIds.some(id => reviewBlockedObservations.has(id))) continue
     for (const observationId of protocol.observationIds) {
       projectionIndexValue(protocolsByObservation, observationId, 'observation protocols')
         .push(protocol.id)
     }
   }
   return {
+    assessments, reviewBlockedObservations,
     activeClaims,
     activeEntities,
     activeObservations,
@@ -2891,6 +2994,10 @@ function projectObservation(
   state: ObservationProjectionState,
   budget: ProjectionBudget,
 ): ProjectedObservation {
+  const assessment = projectionIndexValue(state.assessments, observation.id, 'observation assessment')
+  const rejectedClaims = budget.references(assessment.rejectedClaimIds)
+  const review = assessment.review
+  const projectedReview = review === null ? undefined : projectObservationReview(review, budget)
   const paperId = state.paperByObservation.get(observation.id)
   /* v8 ignore next 3 -- the service validates result-claim paper provenance before storing an observation. */
   if (paperId === undefined) {
@@ -2938,7 +3045,8 @@ function projectObservation(
   const valueStatistic = budget.text(observation.valueStatistic)
   const value = budget.text(String(observation.value))
   const createdBy = projectCreatedBy(observation.createdBy, budget)
-  const referencesTruncated = candidates.truncated
+  const referencesTruncated = rejectedClaims.truncated || (projectedReview?.counter_evidence_ids_truncated ?? false)
+    || candidates.truncated
     || protocols.truncated
     || conditionReferences.truncated
     || evidence.truncated
@@ -2948,6 +3056,12 @@ function projectObservation(
     content_role: 'authored-normalization',
     active: state.activeObservations.has(observation.id),
     stale: state.staleObservationIds.has(observation.id),
+    review_status: review === null ? 'unreviewed' : review.decision === 'revised'
+      ? review.observationId === observation.id ? 'replaced' : 'accepted-after-revision' : review.decision,
+    ...(projectedReview === undefined ? {} : { latest_review: projectedReview }),
+    rejected_source_claim_ids: rejectedClaims.values.map(String),
+    total_rejected_source_claims: assessment.rejectedClaimIds.length,
+    rejected_source_claim_ids_truncated: rejectedClaims.truncated,
     comparison_status: protocolIds.length > 0 ? 'protocol-backed' : 'not-established',
     alignment_status: candidateCount > 0 ? 'candidate' : 'blocked',
     alignment_blockers: [...blockers],
@@ -3092,6 +3206,8 @@ function projectComparisonProtocol(
   state: ObservationProjectionState,
   budget: ProjectionBudget,
 ): ProjectedComparisonProtocol {
+  const reviewBlocked = protocol.observationIds.filter(id => state.reviewBlockedObservations.has(id))
+  const blockedReferences = budget.references(reviewBlocked)
   const rationale = budget.text(protocol.compatibilityRationale)
   const observationReferences = budget.references(protocol.observationIds)
   const staleObservationIds = protocol.observationIds.filter(observationId =>
@@ -3114,7 +3230,11 @@ function projectComparisonProtocol(
     content_role: 'authored-comparison-decision',
     active,
     stale,
-    compatibility_status: active && !stale
+    review_blocked: reviewBlocked.length > 0,
+    review_blocked_observation_ids: blockedReferences.values.map(String),
+    total_review_blocked_observations: reviewBlocked.length,
+    review_blocked_observation_ids_truncated: blockedReferences.truncated,
+    compatibility_status: active && !stale && reviewBlocked.length === 0
       ? 'established-by-active-protocol'
       : 'not-current',
     statistical_significance: 'not-assessed',
@@ -3133,7 +3253,7 @@ function projectComparisonProtocol(
     ...(supersedes === undefined || supersedes.values.length === 0
       ? {}
       : { supersedes_comparison_protocol_id: supersedes.values[0] }),
-    references_truncated: observationReferences.truncated
+    references_truncated: blockedReferences.truncated || observationReferences.truncated
       || staleObservationReferences.truncated
       || (referenceObservation?.truncated ?? false)
       || (supersedes?.truncated ?? false),

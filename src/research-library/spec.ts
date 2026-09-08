@@ -1,6 +1,6 @@
 /**
  * Durable schema and domain declaration for the research-paper library.
- * @module @f1star/dsh-research/research-library/src/spec
+ * @module @deepseek-ai/dsh-research-library/src/spec
  */
 
 import { z } from 'zod'
@@ -43,6 +43,7 @@ const yearField: z.ZodType<ResearchMetadataField<number>> = z.object({
 
 const extraction: z.ZodType<ResearchDocumentExtraction> = z.discriminatedUnion('text', [
   z.object({ text: z.literal('native'), layout: z.literal('approximate') }),
+  z.object({ text: z.literal('ocr-assisted'), layout: z.literal('approximate') }),
   z.object({ text: z.literal('none'), layout: z.literal('page-only') }),
 ])
 
@@ -96,10 +97,10 @@ export const researchPaperRecord: z.ZodType<ResearchPaperRecord> = z.object({
   updatedAt: instant,
 })
 
-/** Version-one, single-table durable library declaration. */
+/** Version-two, single-table durable library declaration. */
 export const researchLibraryDomainSpec = defineDomain({
   name: 'research_library',
-  version: 1,
+  version: 2,
   tables: {
     papers: domainTable<ResearchPaperId, ResearchPaperRecord>(researchPaperRecord),
   },

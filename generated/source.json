@@ -1,0 +1,9 @@
+{
+  "thread": "01a07eac-d3a0-7860-a886-d03fbbb6545e",
+  "owner": "packages/research/research-workspace",
+  "sha256": {
+    "typert.host.js": "9db957bd2d39835bc90ef36846cbfd2f09ad85217ba9338368f9c28f84a1a258",
+    "typert.remote-client.js": "31a592d15bb7b6ec3f6c08ba5b825d73d757d87f5f123a51c63cb5b8d9bf1823",
+    "typert.remote-client.d.ts": "3aa6985cd36d2f617f80327c583dfcf688053501ea9679839a4c0aeb2b1d0395"
+  }
+}

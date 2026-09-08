@@ -1,0 +1,461 @@
+{
+  "extraction": {
+    "text": "ocr-assisted",
+    "layout": "approximate"
+  },
+  "pages": [
+    {
+      "pageIndex": 0,
+      "width": 612.0,
+      "height": 792.0,
+      "blocks": [
+        {
+          "kind": "heading",
+          "text": "Controlled scientific extraction sample",
+          "bbox": {
+            "x": 0.06966145833333333,
+            "y": 0.03326613172537555,
+            "width": 0.5774739583333334,
+            "height": 0.029737902811480598
+          },
+          "headingLevel": 1
+        },
+        {
+          "kind": "paragraph",
+          "text": "Synthetic data for parser verification; not an empirical research result.",
+          "bbox": {
+            "x": 0.07096354166666667,
+            "y": 0.07711693734833688,
+            "width": 0.5559895833333334,
+            "height": 0.016633069073712432
+          }
+        },
+        {
+          "kind": "heading",
+          "text": "1. Evaluation protocol",
+          "bbox": {
+            "x": 0.072265625,
+            "y": 0.11995968031963511,
+            "width": 0.17708333333333334,
+            "height": 0.016633069073712432
+          },
+          "headingLevel": 1
+        },
+        {
+          "kind": "paragraph",
+          "text": "We evaluate on the held-out Test split with 200 examples per method. Accuracy is reported in percent. Uncertainty denotes standard deviation.",
+          "bbox": {
+            "x": 0.06966145833333333,
+            "y": 0.14465726345075094,
+            "width": 0.5794270833333334,
+            "height": 0.03780241686888416
+          }
+        },
+        {
+          "kind": "paragraph",
+          "text": "Method\tSplit\tAccuracy (%)\tSD\nBaseline A\tTest\t80.0\t1.2\nMethod B\tTest\t85.5\t0.8",
+          "bbox": {
+            "x": 0.07139450272703482,
+            "y": 0.2331094452829072,
+            "width": 0.8561805026983124,
+            "height": 0.10090987850921322
+          },
+          "structure": {
+            "kind": "table",
+            "data": {
+              "rows": 3,
+              "columns": 4,
+              "cells": [
+                {
+                  "row": 0,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Method",
+                  "columnHeader": true,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.07942708333333333,
+                    "y": 0.2439516112459228,
+                    "width": 0.07161458333333333,
+                    "height": 0.017137110032617822
+                  }
+                },
+                {
+                  "row": 0,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Split",
+                  "columnHeader": true,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.34765625,
+                    "y": 0.24193549878669507,
+                    "width": 0.05078125,
+                    "height": 0.02268144498369109
+                  }
+                },
+                {
+                  "row": 0,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Accuracy (%)",
+                  "columnHeader": true,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.564453125,
+                    "y": 0.2439516112459228,
+                    "width": 0.12044270833333333,
+                    "height": 0.018649194377038592
+                  }
+                },
+                {
+                  "row": 0,
+                  "column": 3,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "SD",
+                  "columnHeader": true,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.7805989583333334,
+                    "y": 0.242439526901502,
+                    "width": 0.034505208333333336,
+                    "height": 0.019657250606652462
+                  }
+                },
+                {
+                  "row": 1,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Baseline A",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.07942708333333333,
+                    "y": 0.2767137212785406,
+                    "width": 0.09309895833333333,
+                    "height": 0.017137110032617857
+                  }
+                },
+                {
+                  "row": 1,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Test",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.34765625,
+                    "y": 0.2752016369341198,
+                    "width": 0.046223958333333336,
+                    "height": 0.020161278721459397
+                  }
+                },
+                {
+                  "row": 1,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "80.0",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.5638020833333334,
+                    "y": 0.27570566504892674,
+                    "width": 0.043619791666666664,
+                    "height": 0.019153222491845527
+                  }
+                },
+                {
+                  "row": 1,
+                  "column": 3,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "1.2",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.7819010416666666,
+                    "y": 0.2752016369341198,
+                    "width": 0.034505208333333336,
+                    "height": 0.020161278721459397
+                  }
+                },
+                {
+                  "row": 2,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Method B",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.07877604166666667,
+                    "y": 0.30947583131115847,
+                    "width": 0.08463541666666667,
+                    "height": 0.01713708434442077
+                  }
+                },
+                {
+                  "row": 2,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Test",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.34765625,
+                    "y": 0.3079637212785406,
+                    "width": 0.046223958333333336,
+                    "height": 0.02066533252446342
+                  }
+                },
+                {
+                  "row": 2,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "85.5",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.5638020833333334,
+                    "y": 0.30846774939334753,
+                    "width": 0.044270833333333336,
+                    "height": 0.019153222491845562
+                  }
+                },
+                {
+                  "row": 2,
+                  "column": 3,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "0.8",
+                  "columnHeader": false,
+                  "rowHeader": false,
+                  "bbox": {
+                    "x": 0.7805989583333334,
+                    "y": 0.30846774939334753,
+                    "width": 0.03515625,
+                    "height": 0.019657276294849514
+                  }
+                }
+              ]
+            },
+            "captions": [
+              "Table 1. Accuracy on the Test split over three independent runs."
+            ],
+            "footnotes": []
+          }
+        },
+        {
+          "kind": "paragraph",
+          "text": "Table 1. Accuracy on the Test split over three independent runs.",
+          "bbox": {
+            "x": 0.07096354166666667,
+            "y": 0.20161291565557923,
+            "width": 0.5143229166666666,
+            "height": 0.0166330562296138
+          }
+        },
+        {
+          "kind": "paragraph",
+          "text": "Note: SD is measured across runs, not a confidence interval.",
+          "bbox": {
+            "x": 0.0703125,
+            "y": 0.3432459718851932,
+            "width": 0.4440104166666667,
+            "height": 0.014616943770386057
+          }
+        },
+        {
+          "kind": "paragraph",
+          "text": "Figure 1. Test accuracy at three training epochs. Points are means.",
+          "bbox": {
+            "x": 0.09016704559326172,
+            "y": 0.411317112469914,
+            "width": 0.8182092118107416,
+            "height": 0.21778403388129342
+          },
+          "structure": {
+            "kind": "figure",
+            "captions": [
+              "Figure 1. Test accuracy at three training epochs. Points are means."
+            ],
+            "footnotes": [],
+            "classification": "line_chart",
+            "chartData": {
+              "rows": 4,
+              "columns": 3,
+              "cells": [
+                {
+                  "row": 0,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Training epochs",
+                  "columnHeader": true,
+                  "rowHeader": false
+                },
+                {
+                  "row": 0,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Baseline A",
+                  "columnHeader": true,
+                  "rowHeader": false
+                },
+                {
+                  "row": 0,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Method B",
+                  "columnHeader": true,
+                  "rowHeader": false
+                },
+                {
+                  "row": 1,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "1",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 1,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "70",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 1,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "72",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 2,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "2",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 2,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "75",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 2,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "80",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 3,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "3",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 3,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "80",
+                  "columnHeader": false,
+                  "rowHeader": false
+                },
+                {
+                  "row": 3,
+                  "column": 2,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "85",
+                  "columnHeader": false,
+                  "rowHeader": false
+                }
+              ]
+            },
+            "description": null,
+            "status": "extracted"
+          }
+        },
+        {
+          "kind": "paragraph",
+          "text": "Figure 1. Test accuracy at three training epochs. Points are means.",
+          "bbox": {
+            "x": 0.07096354166666667,
+            "y": 0.6502016626223169,
+            "width": 0.4908854166666667,
+            "height": 0.01512094619699605
+          }
+        },
+        {
+          "kind": "heading",
+          "text": "2. Accuracy definition",
+          "bbox": {
+            "x": 0.07161458333333333,
+            "y": 0.6945564963600852,
+            "width": 0.17317708333333334,
+            "height": 0.01512094619699605
+          },
+          "headingLevel": 1
+        },
+        {
+          "kind": "paragraph",
+          "text": "OOT 1(yi = y)",
+          "bbox": {
+            "x": 0.20703125,
+            "y": 0.735383107606008,
+            "width": 0.4375,
+            "height": 0.0332661124592276
+          },
+          "structure": {
+            "kind": "formula",
+            "latex": "= \\frac { 1 0 0 } { N } \\sum _ { i = 1 } ^ { N } { \\mathbf 1 } ( \\hat { y } _ { i } = y _ { i } )",
+            "status": "extracted"
+          }
+        },
+        {
+          "kind": "paragraph",
+          "text": "Here N is the number of test examples; y is the reference label. The indicator is 1 for a correct predicted label and 0 otherwise.",
+          "bbox": {
+            "x": 0.06966145833333333,
+            "y": 0.8044354987866951,
+            "width": 0.5071614583333334,
+            "height": 0.038810498786695076
+          }
+        }
+      ]
+    }
+  ],
+  "parserVersion": "docling-2.126.0-v1-73b90ca73d00bbc32c84bc81eb6a2be656b9d700c6e37ca606451bab8c2f64c0"
+}

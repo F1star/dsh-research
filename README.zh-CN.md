@@ -4,7 +4,9 @@
 
 `@f1star/dsh-research` 是面向证据优先论文工作的可安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle。它是 DSH bundle 插件，不是 Codex 插件，需要在现有 DSH profile 内运行。
 
-本 bundle 提供本地原生文本 PDF 阅读、持久论文库和可审计的科研信息工作流。它保留精确来源锚点，并明确区分引文证据与作者撰写的笔记、推断、归一化、比较决策和综合结论。
+0.4 版提供原始 PDF 归档、科研工作台、可选 OCR、人工审阅、带引用的报告导出和可恢复科研任务。它保留精确来源锚点，并明确区分引文证据与作者撰写的笔记、推断、归一化、比较决策和综合结论。
+
+**升级提醒：0.3 的 profile 数据不能直接由 0.4 打开。请先备份完整存储，并为 0.4 使用独立的新存储，详见“从 0.3 升级”。**
 
 ## 提供的能力
 
@@ -28,7 +30,7 @@
 将 bundle 安装到随发行版提供的 Web profile：
 
 ```sh
-dsh plugin --profile web add github:F1star/dsh-research
+dsh plugin --profile web add https://github.com/F1star/dsh-research/releases/download/v0.4.0/dsh-research.tgz
 dsh --profile web --dump-config
 dsh web
 ```
@@ -74,17 +76,20 @@ bundle 行位于 [`cordis.patch.yml`](cordis.patch.yml)，各插件的默认值�
 ## 数据与限制
 
 - 论文身份、来源 observation、科研问题、证据、笔记、claim、entity、observation、comparison protocol 和 synthesis 会写入所选 profile 的持久 storage，并可能对使用该 storage 的多个会话可见。
-- 已解析 PDF 页面只存在于当前进程。重启后，必须重新导入 PDF 才能继续读取 block 或捕获新证据。论文库记录身份和 observation，不保存来源 PDF 字节。
-- 证据记录保留精确 block 文本和 provenance，但重建历史 PDF 仍需要你自行持久保存来源文件。
-- PDF.js 只提取原生文本。扫描版或纯图片文档需要在本 bundle 之外进行 OCR；本次导入不能支持文本 claim。
+- 原始 PDF 字节及其精确解析版本会归档到 profile storage，重启后可以恢复。请备份整个 profile storage；仅导出论文库记录不等于备份原文。
+- PDF.js 默认只提取原生文本。扫描文档需配置可选 [Docling OCR](docs/ocr.md)。`paper_structure` 可分页检查带定位的科学内容提取结果；OCR、公式与图表提取可能出错，必须对照原文复核。
 - Reading pack 的识别依赖提取出的章节标签和近似阅读顺序。角色未匹配不表示论文缺少相应主题。
 - 检索与论文库匹配均为词法操作。本 bundle 不提供语义检索、远程 DOI 或 arXiv 验证、自动 claim 聚类或自动 entity resolution。
 - 数值 observation 和 comparison protocol 是作者给出的归一化。将 protocol 关联到 synthesis inference 会记录其明确的 comparison basis；本 bundle 仍不会暗中转换单位或 alias，也不会对结果排序、计算差值、推断统计显著性或执行 meta-analysis。
-- Review render 是对已保留记录的确定性 Markdown 投影，不是自动生成完整文献综述，也不是正式的 CSL/BibTeX 引用导出器。它始终输出精确 selection 哈希与偏移，仅在显式请求时披露选中文本，否则输出 locator 而不重复完整证据 block。
+- `research_review_render` 保留精确哈希、偏移和按需披露原文的确定性 Markdown 输出；工作台新增报告服务，可导出 Markdown、LaTeX、BibTeX、CSL-JSON 和完整 provenance 文件。缺失书目或证据仍会明确警告，两种输出都不代表获准发表。
+- 在 Web 侧栏打开 Research，可浏览归档 PDF、保存阅读位置、写笔记、查看证据矩阵，并以注册研究者身份审阅论断与数值结果。
+- `research_task_list`、`research_task_get`、`research_task_write` 保存阶段检查点、暂停与恢复状态。检查点可跨重启恢复，运行中的 agent 不会自动重启。执行服务需要可信客户端显式启动，具有步骤、时间、并发限制，并在需要人工审阅时停止。浏览器已包含任务创建、进度查看、暂停与恢复，但尚未加入执行器的启动、停止和运行历史按钮。
 
-## 从 0.2 升级
+## 从 0.3 升级
 
-0.3 将 `research_information` 持久 domain 从版本 4 提升到版本 5，因为每个 synthesis finding 现在都会存储一个必需的 comparison-protocol reference 数组。版本 4 数据不会自动迁移到版本 5。更新前请备份所选 profile 的 storage。如果其中已有版本 4 的科研信息数据，0.3 会因版本不匹配而拒绝打开该 domain，并保持原数据不变；将 bundle 固定回 `v0.2.0` 后即可再次访问这些数据。版本 1 的论文库 domain 不受影响。
+0.4 使用 `research_library` 版本 2 和 `research_information` 版本 7。版本 7 将人工审阅记录与独立插件 0.3 的比较溯源字段合并，不等同于源码应用的版本 6。没有自动迁移：请停止旧 profile，备份完整存储，并为 0.4 使用独立的新存储。不支持的版本会被拒绝打开，不会改写原有记录；固定回 `v0.3.0` 可再次打开未改动的 0.3 数据。不要通过删除存储来消除版本错误。更早的 0.2 数据同样需要匹配的旧插件。
+
+包职责、浏览器生成描述符和任务执行归属见[架构说明](docs/architecture.md)。开发检验使用 `pnpm install && pnpm run check`；GitHub 和 release 安装使用预构建产物，不需要安装时编译。
 
 ## 更新或移除
 

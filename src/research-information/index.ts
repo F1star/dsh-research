@@ -1,7 +1,7 @@
 /**
  * Durable questions, evidence, reading notes, claims, normalized entities, observations,
  * comparison protocols, and cited synthesis.
- * @module @f1star/dsh-research/research-information
+ * @module @deepseek-ai/dsh-research-information
  */
 
 import { Buffer } from 'node:buffer'
@@ -22,6 +22,18 @@ import type {
   ResearchAuthorId as ResearchAuthorIdBrand,
   ResearchAuthorship,
   ResearchClaim,
+  ResearchClaimReview,
+  ResearchClaimReviewDecision,
+  ResearchClaimReviewId,
+  ResearchReviewAssessment,
+  ResearchObservationReview,
+  ResearchObservationReviewDecision,
+  ResearchObservationReviewId,
+  ResearchObservationState,
+  ReviewResearchObservationRequest,
+  ReviewResearchObservationResult,
+  ReviewResearchClaimRequest,
+  ReviewResearchClaimResult,
   ResearchClaimId as ResearchClaimIdBrand,
   ResearchComparisonDimension,
   ResearchComparisonProtocol,
@@ -73,6 +85,18 @@ export type {
   CaptureResearchEvidenceResult,
   ResearchAuthorship,
   ResearchClaim,
+  ResearchClaimReview,
+  ResearchClaimReviewDecision,
+  ResearchClaimReviewId,
+  ResearchReviewAssessment,
+  ResearchObservationReview,
+  ResearchObservationReviewDecision,
+  ResearchObservationReviewId,
+  ResearchObservationState,
+  ReviewResearchObservationRequest,
+  ReviewResearchObservationResult,
+  ReviewResearchClaimRequest,
+  ReviewResearchClaimResult,
   ResearchClaimEvidenceLink,
   ResearchClaimReferenceFailure,
   ResearchEvidence,
@@ -274,6 +298,8 @@ export const DEFAULT_MAX_QUESTIONS = 1_000
 export const DEFAULT_MAX_EVIDENCE_PER_QUESTION = 10_000
 /** Default maximum claims per question. */
 export const DEFAULT_MAX_CLAIMS_PER_QUESTION = 10_000
+/** Default maximum researcher decisions per question. */
+export const DEFAULT_MAX_CLAIM_REVIEWS_PER_QUESTION = 10_000
 /** Default maximum synthesis records per question. */
 export const DEFAULT_MAX_SYNTHESES_PER_QUESTION = 1_000
 /** Default maximum findings in one synthesis. */
@@ -294,6 +320,10 @@ export const DEFAULT_MAX_CLAIM_REFERENCES_PER_ENTITY = 256
 export const DEFAULT_MAX_SUPERSEDED_ENTITIES_PER_ENTITY = 64
 /** Default maximum normalized observations per question. */
 export const DEFAULT_MAX_OBSERVATIONS_PER_QUESTION = 10_000
+/** Default maximum immutable observation assessments per question. */
+export const DEFAULT_MAX_OBSERVATION_REVIEWS_PER_QUESTION = 10_000
+/** Default maximum counterevidence references on one observation assessment. */
+export const DEFAULT_MAX_COUNTER_EVIDENCE_PER_OBSERVATION_REVIEW = 64
 /** Default maximum reported conditions on one observation. */
 export const DEFAULT_MAX_CONDITIONS_PER_OBSERVATION = 64
 /** Default maximum authored comparison protocols per question. */
@@ -315,6 +345,8 @@ export interface Config {
   readonly maxEvidencePerQuestion?: number
   /** Maximum immutable claims per question. Defaults to 10000. */
   readonly maxClaimsPerQuestion?: number
+  /** Maximum immutable researcher decisions per question. Defaults to 10000. */
+  readonly maxClaimReviewsPerQuestion?: number
   /** Maximum immutable syntheses per question. Defaults to 1000. */
   readonly maxSynthesesPerQuestion?: number
   /** Maximum findings in one synthesis. Defaults to 256. */
@@ -335,6 +367,10 @@ export interface Config {
   readonly maxSupersededEntitiesPerEntity?: number
   /** Maximum immutable normalized observations per question. Defaults to 10000. */
   readonly maxObservationsPerQuestion?: number
+  /** Maximum immutable researcher observation assessments per question. Defaults to 10000. */
+  readonly maxObservationReviewsPerQuestion?: number
+  /** Maximum counterevidence references per observation assessment. Defaults to 64. */
+  readonly maxCounterEvidencePerObservationReview?: number
   /** Maximum reported conditions on one observation. Defaults to 64. */
   readonly maxConditionsPerObservation?: number
   /** Maximum immutable comparison protocols per question. Defaults to 1000. */
@@ -353,6 +389,7 @@ interface ResolvedConfig {
   readonly maxQuestions: number
   readonly maxEvidencePerQuestion: number
   readonly maxClaimsPerQuestion: number
+  readonly maxClaimReviewsPerQuestion: number
   readonly maxSynthesesPerQuestion: number
   readonly maxFindingsPerSynthesis: number
   readonly maxEvidenceLinksPerClaim: number
@@ -363,6 +400,8 @@ interface ResolvedConfig {
   readonly maxClaimReferencesPerEntity: number
   readonly maxSupersededEntitiesPerEntity: number
   readonly maxObservationsPerQuestion: number
+  readonly maxObservationReviewsPerQuestion: number
+  readonly maxCounterEvidencePerObservationReview: number
   readonly maxConditionsPerObservation: number
   readonly maxComparisonProtocolsPerQuestion: number
   readonly maxObservationReferencesPerProtocol: number
@@ -417,6 +456,7 @@ export class ResearchInformation extends Service {
     maxQuestions: z.number().step(1).min(1).default(DEFAULT_MAX_QUESTIONS),
     maxEvidencePerQuestion: z.number().step(1).min(1).default(DEFAULT_MAX_EVIDENCE_PER_QUESTION),
     maxClaimsPerQuestion: z.number().step(1).min(1).default(DEFAULT_MAX_CLAIMS_PER_QUESTION),
+    maxClaimReviewsPerQuestion: z.number().step(1).min(1).default(DEFAULT_MAX_CLAIM_REVIEWS_PER_QUESTION),
     maxSynthesesPerQuestion: z.number().step(1).min(1).default(DEFAULT_MAX_SYNTHESES_PER_QUESTION),
     maxFindingsPerSynthesis: z.number().step(1).min(1).default(DEFAULT_MAX_FINDINGS_PER_SYNTHESIS),
     maxEvidenceLinksPerClaim: z.number().step(1).min(1).default(DEFAULT_MAX_EVIDENCE_LINKS_PER_CLAIM),
@@ -434,6 +474,8 @@ export class ResearchInformation extends Service {
       .default(DEFAULT_MAX_SUPERSEDED_ENTITIES_PER_ENTITY),
     maxObservationsPerQuestion: z.number().step(1).min(1)
       .default(DEFAULT_MAX_OBSERVATIONS_PER_QUESTION),
+    maxObservationReviewsPerQuestion: z.number().step(1).min(1).default(DEFAULT_MAX_OBSERVATION_REVIEWS_PER_QUESTION),
+    maxCounterEvidencePerObservationReview: z.number().step(1).min(1).default(DEFAULT_MAX_COUNTER_EVIDENCE_PER_OBSERVATION_REVIEW),
     maxConditionsPerObservation: z.number().step(1).min(1)
       .default(DEFAULT_MAX_CONDITIONS_PER_OBSERVATION),
     maxComparisonProtocolsPerQuestion: z.number().step(1).min(1)
@@ -460,6 +502,10 @@ export class ResearchInformation extends Service {
       maxClaimsPerQuestion: positiveSafeInteger(
         'maxClaimsPerQuestion',
         config.maxClaimsPerQuestion ?? DEFAULT_MAX_CLAIMS_PER_QUESTION,
+      ),
+      maxClaimReviewsPerQuestion: positiveSafeInteger(
+        'maxClaimReviewsPerQuestion',
+        config.maxClaimReviewsPerQuestion ?? DEFAULT_MAX_CLAIM_REVIEWS_PER_QUESTION,
       ),
       maxSynthesesPerQuestion: positiveSafeInteger(
         'maxSynthesesPerQuestion',
@@ -502,6 +548,10 @@ export class ResearchInformation extends Service {
         'maxObservationsPerQuestion',
         config.maxObservationsPerQuestion ?? DEFAULT_MAX_OBSERVATIONS_PER_QUESTION,
       ),
+      maxObservationReviewsPerQuestion: positiveSafeInteger('maxObservationReviewsPerQuestion',
+        config.maxObservationReviewsPerQuestion ?? DEFAULT_MAX_OBSERVATION_REVIEWS_PER_QUESTION),
+      maxCounterEvidencePerObservationReview: positiveSafeInteger('maxCounterEvidencePerObservationReview',
+        config.maxCounterEvidencePerObservationReview ?? DEFAULT_MAX_COUNTER_EVIDENCE_PER_OBSERVATION_REVIEW),
       maxConditionsPerObservation: positiveSafeInteger(
         'maxConditionsPerObservation',
         config.maxConditionsPerObservation ?? DEFAULT_MAX_CONDITIONS_PER_OBSERVATION,
@@ -579,6 +629,16 @@ export class ResearchInformation extends Service {
   }
 
   /**
+   * Record a researcher assessment, atomically appending a replacement for a revision.
+   * @param request - trusted authorship, current revision, assessment, and optional replacement.
+   * @returns the committed review or an explicit refusal without writing; agent authors are refused.
+   */
+  reviewClaim(request: ReviewResearchClaimRequest): Promise<ReviewResearchClaimResult> {
+    const normalized = this.normalizeReviewRequest(request)
+    return this.enqueueOperation(() => this.reviewClaimNow(normalized))
+  }
+
+  /**
    * Append an immutable authored normalization and optionally merge active same-kind entity lineages.
    * @param request - Entity name, kind, source-claim references, authorship, and revision.
    * @returns the committed aggregate or an explicit non-writing failure.
@@ -598,6 +658,23 @@ export class ResearchInformation extends Service {
   writeObservation(request: WriteResearchObservationRequest): Promise<WriteResearchObservationResult> {
     const normalized = this.normalizeObservationRequest(request)
     return this.enqueueOperation(() => this.writeObservationNow(normalized))
+  }
+
+  /**
+   * Assess one active normalized result; a revised result and its approval share one atomic write.
+   * @param request - researcher identity, current question revision, assessment, and optional complete replacement.
+   * @returns committed history or a refusal without changing either the observation or its reviews.
+   */
+  reviewObservation(request: ReviewResearchObservationRequest): Promise<ReviewResearchObservationResult> {
+    const fields = this.normalizeReviewAssessment(request)
+    const normalized: ReviewResearchObservationRequest = {
+      ...request, ...fields,
+      ...(request.decision === 'revised' ? { replacement: this.normalizeObservationRequest({
+        ...request.replacement, questionId: request.questionId, expectedRevision: fields.expectedRevision,
+        supersedes: request.observationId, author: fields.author,
+      }) } : {}),
+    }
+    return this.enqueueOperation(() => this.reviewObservationNow(normalized))
   }
 
   /**
@@ -660,6 +737,8 @@ export class ResearchInformation extends Service {
         updatedBy: request.author,
         evidence: [],
         claims: [],
+        claimReviews: [],
+        observationReviews: [],
         syntheses: [],
         readingNotes: [],
         entities: [],
@@ -814,6 +893,12 @@ export class ResearchInformation extends Service {
   }
 
   private async writeClaimNow(request: WriteResearchClaimRequest): Promise<WriteResearchClaimResult> {
+    const result = this.prepareClaim(request)
+    if (result.status === 'created') await this.requireTable().put(result.question.id, result.question)
+    return result
+  }
+
+  private prepareClaim(request: WriteResearchClaimRequest): WriteResearchClaimResult {
     const table = this.requireTable()
     if (request.evidenceLinks.length > this.config.maxEvidenceLinksPerClaim) {
       return { status: 'capacity', resource: 'evidence-links' }
@@ -875,8 +960,120 @@ export class ResearchInformation extends Service {
     }
     const capacity = this.aggregateCapacity(next)
     if (capacity !== undefined) return capacity
-    await table.put(next.id, next)
     return { status: 'created', question: next, claimId: claim.id }
+  }
+
+  private async reviewClaimNow(request: ReviewResearchClaimRequest): Promise<ReviewResearchClaimResult> {
+    if (request.author.kind !== 'researcher') return { status: 'researcher-required' }
+    const table = this.requireTable()
+    const current = table.get(request.questionId)
+    if (current === undefined) return { status: 'question-not-found', questionId: request.questionId }
+    const stale = staleRevision(current, request.expectedRevision)
+    if (stale !== undefined) return stale
+    const claim = current.claims.find(value => value.id === request.claimId)
+    if (claim === undefined) return { status: 'claim-not-found', claimId: request.claimId }
+    if (!isActiveClaim(current, claim.id)) return { status: 'claim-inactive', claimId: claim.id }
+    if (current.claimReviews.length >= this.config.maxClaimReviewsPerQuestion) {
+      return { status: 'capacity', resource: 'claim-reviews' }
+    }
+    if (request.counterEvidenceIds.length > this.config.maxEvidenceLinksPerClaim) {
+      return { status: 'capacity', resource: 'evidence-links' }
+    }
+    const fields = this.fieldCapacity([
+      request.rationale, String(request.author.id),
+      ...(request.qualifications === undefined ? [] : [request.qualifications]),
+    ])
+    if (fields !== undefined) return fields
+    for (const evidenceId of request.counterEvidenceIds) {
+      if (!current.evidence.some(value => value.id === evidenceId)) {
+        return { status: 'evidence-not-found', evidenceId }
+      }
+    }
+    let candidate = current
+    let decision: ResearchClaimReviewDecision
+    if (request.decision === 'revised') {
+      const prepared = this.prepareClaim(this.normalizeClaimRequest({
+        questionId: current.id, expectedRevision: current.revision,
+        kind: claim.kind, facet: claim.facet,
+        ...(claim.otherFacet === undefined ? {} : { otherFacet: claim.otherFacet }),
+        ...request.replacement, supersedes: claim.id, author: request.author,
+      }))
+      if (prepared.status !== 'created') return prepared
+      candidate = prepared.question
+      decision = { decision: 'revised', replacementClaimId: prepared.claimId }
+    } else {
+      decision = { decision: request.decision }
+    }
+    const now = candidate === current ? mutationTimestamp(current) : candidate.updatedAt
+    const review: ResearchClaimReview = {
+      ...decision, id: randomUUID() as ResearchClaimReviewId, claimId: claim.id,
+      evidenceSupport: request.evidenceSupport, rationale: request.rationale,
+      ...(request.qualifications === undefined ? {} : { qualifications: request.qualifications }),
+      counterEvidenceIds: request.counterEvidenceIds,
+      questionRevision: current.revision + 1, createdBy: request.author, createdAt: now,
+    }
+    const next: ResearchQuestionRecord = {
+      ...candidate, revision: current.revision + 1,
+      claimReviews: [...current.claimReviews, review], updatedBy: request.author, updatedAt: now,
+    }
+    const capacity = this.aggregateCapacity(next)
+    if (capacity !== undefined) return capacity
+    await table.put(next.id, next)
+    return { status: 'created', question: next, reviewId: review.id }
+  }
+
+  private async reviewObservationNow(request: ReviewResearchObservationRequest): Promise<ReviewResearchObservationResult> {
+    if (request.author.kind !== 'researcher') return { status: 'researcher-required' }
+    const table = this.requireTable()
+    const current = table.get(request.questionId)
+    if (current === undefined) return { status: 'question-not-found', questionId: request.questionId }
+    const stale = staleRevision(current, request.expectedRevision)
+    if (stale !== undefined) return stale
+    const observation = current.observations.find(value => value.id === request.observationId)
+    if (observation === undefined) return { status: 'observation-not-found', observationId: request.observationId }
+    if (!isActiveObservation(current, observation.id)) return { status: 'observation-inactive', observationId: observation.id }
+    if (current.observationReviews.length >= this.config.maxObservationReviewsPerQuestion) {
+      return { status: 'capacity', resource: 'observation-reviews' }
+    }
+    if (request.counterEvidenceIds.length > this.config.maxCounterEvidencePerObservationReview) {
+      return { status: 'capacity', resource: 'observation-review-counterevidence' }
+    }
+    const fields = this.fieldCapacity([request.rationale, String(request.author.id),
+      ...(request.qualifications === undefined ? [] : [request.qualifications])])
+    if (fields !== undefined) return fields
+    for (const evidenceId of request.counterEvidenceIds) {
+      if (!current.evidence.some(value => value.id === evidenceId)) return { status: 'evidence-not-found', evidenceId }
+    }
+    let candidate = current
+    let reviewed = observation
+    let decision: ResearchObservationReviewDecision
+    if (request.decision === 'revised') {
+      const prepared = this.prepareObservation({ ...request.replacement, questionId: current.id,
+        expectedRevision: current.revision, supersedes: observation.id, author: request.author })
+      if (prepared.status !== 'created') return prepared
+      candidate = prepared.question
+      reviewed = candidate.observations[candidate.observations.length - 1] as ResearchObservation
+      decision = { decision: 'revised', replacementObservationId: prepared.observationId }
+    } else {
+      decision = { decision: request.decision }
+    }
+    if (request.decision !== 'rejected') {
+      if (isObservationStale(candidate, reviewed)) return { status: 'observation-stale', observationId: observation.id }
+      const rejected = observationRejectedClaim(candidate, reviewed)
+      if (rejected !== undefined) return { status: 'observation-rejected-claim', claimId: rejected }
+    }
+    const now = candidate === current ? mutationTimestamp(current) : candidate.updatedAt
+    const review: ResearchObservationReview = { ...decision, id: randomUUID() as ResearchObservationReviewId,
+      observationId: observation.id, evidenceSupport: request.evidenceSupport, rationale: request.rationale,
+      ...(request.qualifications === undefined ? {} : { qualifications: request.qualifications }),
+      counterEvidenceIds: request.counterEvidenceIds, questionRevision: current.revision + 1,
+      createdBy: request.author, createdAt: now }
+    const next: ResearchQuestionRecord = { ...candidate, revision: current.revision + 1,
+      observationReviews: [...current.observationReviews, review], updatedBy: request.author, updatedAt: now }
+    const capacity = this.aggregateCapacity(next)
+    if (capacity !== undefined) return capacity
+    await table.put(next.id, next)
+    return { status: 'created', question: next, reviewId: review.id }
   }
 
   private async writeEntityNow(request: NormalizedEntityWrite): Promise<WriteResearchEntityResult> {
@@ -949,9 +1146,15 @@ export class ResearchInformation extends Service {
     return { status: 'created', question: next, entityId: entity.id }
   }
 
-  private async writeObservationNow(
+  private async writeObservationNow(request: WriteResearchObservationRequest): Promise<WriteResearchObservationResult> {
+    const result = this.prepareObservation(request)
+    if (result.status === 'created') await this.requireTable().put(result.question.id, result.question)
+    return result
+  }
+
+  private prepareObservation(
     request: WriteResearchObservationRequest,
-  ): Promise<WriteResearchObservationResult> {
+  ): WriteResearchObservationResult {
     const conditionValues = request.conditions.status === 'reported' ? request.conditions.values : []
     if (conditionValues.length > this.config.maxConditionsPerObservation) {
       return { status: 'capacity', resource: 'observation-conditions' }
@@ -1055,7 +1258,6 @@ export class ResearchInformation extends Service {
     }
     const capacity = this.aggregateCapacity(next)
     if (capacity !== undefined) return capacity
-    await table.put(next.id, next)
     return { status: 'created', question: next, observationId: observation.id }
   }
 
@@ -1090,6 +1292,11 @@ export class ResearchInformation extends Service {
       if (isObservationStale(current, observation)) {
         return { status: 'observation-stale', observationId }
       }
+      if (getResearchObservationReview(current, observation.id)?.decision === 'rejected') {
+        return { status: 'observation-rejected', observationId }
+      }
+      const rejectedClaim = observationRejectedClaim(current, observation)
+      if (rejectedClaim !== undefined) return { status: 'observation-rejected-claim', claimId: rejectedClaim }
       observations.push(observation)
       paperIds.add(observationPaperId(current, observation))
     }
@@ -1330,6 +1537,28 @@ export class ResearchInformation extends Service {
       text: this.normalizeText('claim text', request.text),
       evidenceLinks: links,
       author: this.normalizeAuthor(request.author),
+    }
+  }
+
+  private normalizeReviewAssessment(request: Pick<ReviewResearchClaimRequest,
+    'expectedRevision' | 'rationale' | 'qualifications' | 'counterEvidenceIds' | 'author'>) {
+    return {
+      expectedRevision: nonNegativeSafeInteger('expectedRevision', request.expectedRevision),
+      rationale: this.normalizeAuthoredText('review rationale', request.rationale),
+      ...(request.qualifications === undefined ? {} : {
+        qualifications: this.normalizeAuthoredText('review qualifications', request.qualifications),
+      }),
+      counterEvidenceIds: [...new Set(request.counterEvidenceIds)],
+      author: this.normalizeAuthor(request.author),
+    }
+  }
+
+  private normalizeReviewRequest(request: ReviewResearchClaimRequest): ReviewResearchClaimRequest {
+    return {
+      ...request, ...this.normalizeReviewAssessment(request),
+      ...(request.decision === 'revised' ? {
+        replacement: { text: request.replacement.text, evidenceLinks: request.replacement.evidenceLinks.map(value => ({ ...value })) },
+      } : {}),
     }
   }
 
@@ -1707,6 +1936,98 @@ export class ResearchInformation extends Service {
     return undefined
   }
 
+  private validateReviewHistory(record: ResearchQuestionRecord,
+    reviews: readonly (ResearchReviewAssessment & { readonly id: ResearchClaimReviewId | ResearchObservationReviewId })[],
+    kind: 'claim' | 'observation', counterEvidenceLimit: number): void {
+    this.assertUnique(`question '${record.id}' ${kind} review ids`, reviews.map(value => value.id))
+    let previousRevision = 0
+    let previousTime = Date.parse(record.createdAt)
+    for (const review of reviews) {
+      this.assertCanonicalAuthoredText('review rationale', review.rationale)
+      if (review.qualifications !== undefined) this.assertCanonicalAuthoredText('review qualifications', review.qualifications)
+      this.assertCanonicalAuthor(review.createdBy)
+      if (review.createdBy.kind !== 'researcher') throw inconsistent(`${kind} review requires a researcher`)
+      const timestamp = this.childTimestamp(record, `review '${review.id}'`, review.createdAt)
+      if (review.questionRevision <= previousRevision || review.questionRevision > record.revision
+        || timestamp < previousTime) throw inconsistent(`${kind} review history is not in revision order`)
+      previousRevision = review.questionRevision
+      previousTime = timestamp
+      this.assertUnique(`review '${review.id}' counterevidence`, review.counterEvidenceIds)
+      if (review.counterEvidenceIds.length > counterEvidenceLimit) {
+        throw inconsistent(`review '${review.id}' counterevidence exceeds configured maximum`)
+      }
+      for (const evidenceId of review.counterEvidenceIds) {
+        const evidence = record.evidence.find(value => value.id === evidenceId)
+        if (evidence === undefined || Date.parse(evidence.createdAt) > timestamp) {
+          throw inconsistent(`review '${review.id}' references missing or later counterevidence`)
+        }
+      }
+    }
+  }
+
+  private validateStoredReviews(record: ResearchQuestionRecord): void {
+    this.validateReviewHistory(record, record.claimReviews, 'claim', this.config.maxEvidenceLinksPerClaim)
+    for (const review of record.claimReviews) {
+      const timestamp = Date.parse(review.createdAt)
+      const claim = record.claims.find(value => value.id === review.claimId)
+      if (claim === undefined || Date.parse(claim.createdAt) > timestamp) {
+        throw inconsistent(`review '${review.id}' references a missing or later claim`)
+      }
+      const successor = record.claims.find(value => value.supersedes === claim.id)
+      if (successor !== undefined && Date.parse(successor.createdAt) < timestamp) {
+        throw inconsistent(`review '${review.id}' targets an already superseded claim`)
+      }
+      if (review.decision === 'revised') {
+        if (successor === undefined || successor.id !== review.replacementClaimId
+          || successor.createdBy.kind !== 'researcher' || successor.createdBy.id !== review.createdBy.id
+          || successor.createdAt !== review.createdAt || successor.facet !== claim.facet
+          || successor.otherFacet !== claim.otherFacet) {
+          throw inconsistent(`review '${review.id}' has no matching researcher replacement`)
+        }
+      }
+    }
+  }
+
+  private validateStoredObservationReviews(record: ResearchQuestionRecord): void {
+    this.validateReviewHistory(record, record.observationReviews, 'observation', this.config.maxCounterEvidencePerObservationReview)
+    const revisions = [...record.claimReviews, ...record.observationReviews].sort((a, b) => a.questionRevision - b.questionRevision)
+    this.assertUnique(`question '${record.id}' researcher decision revisions`, revisions.map(value => String(value.questionRevision)))
+    let previousTime = Date.parse(record.createdAt)
+    for (const review of revisions) {
+      const timestamp = Date.parse(review.createdAt)
+      if (timestamp < previousTime) throw inconsistent('researcher decision timestamps disagree with committed revisions')
+      previousTime = timestamp
+    }
+    for (const review of record.observationReviews) {
+      const timestamp = Date.parse(review.createdAt)
+      const observation = record.observations.find(value => value.id === review.observationId)
+      if (observation === undefined || Date.parse(observation.createdAt) > timestamp) {
+        throw inconsistent(`observation review '${review.id}' references a missing or later observation`)
+      }
+      const successor = record.observations.find(value => value.supersedes === observation.id)
+      if (successor !== undefined && Date.parse(successor.createdAt) < timestamp) {
+        throw inconsistent(`observation review '${review.id}' targets an already superseded observation`)
+      }
+      if (review.decision === 'revised' && (successor === undefined || successor.id !== review.replacementObservationId
+        || successor.createdBy.kind !== 'researcher' || successor.createdBy.id !== review.createdBy.id
+        || successor.createdAt !== review.createdAt)) {
+        throw inconsistent(`observation review '${review.id}' has no matching researcher replacement`)
+      }
+      if (review.decision !== 'rejected') {
+        const reviewed = review.decision === 'revised' ? successor as ResearchObservation : observation
+        const historical = { ...record,
+          claims: record.claims.filter(claim => Date.parse(claim.createdAt) < timestamp
+            || observationClaimIds(reviewed).includes(claim.id)),
+          entities: record.entities.filter(entity => Date.parse(entity.createdAt) < timestamp
+            || observationEntityIds(reviewed).includes(entity.id)),
+          claimReviews: record.claimReviews.filter(value => value.questionRevision < review.questionRevision) }
+        if (isObservationStale(historical, reviewed) || observationRejectedClaim(historical, reviewed) !== undefined) {
+          throw inconsistent(`observation review '${review.id}' approves stale or rejected source records`)
+        }
+      }
+    }
+  }
+
   private validateStoredState(): void {
     const table = this.requireTable()
     if (table.size > this.config.maxQuestions) {
@@ -1732,6 +2053,9 @@ export class ResearchInformation extends Service {
     if (record.claims.length > this.config.maxClaimsPerQuestion) {
       throw inconsistent(`question '${record.id}' claims exceed configured maximum`)
     }
+    if (record.claimReviews.length > this.config.maxClaimReviewsPerQuestion) {
+      throw inconsistent(`question '${record.id}' claim reviews exceed configured maximum`)
+    }
     if (record.syntheses.length > this.config.maxSynthesesPerQuestion) {
       throw inconsistent(`question '${record.id}' syntheses exceed configured maximum`)
     }
@@ -1740,6 +2064,9 @@ export class ResearchInformation extends Service {
     }
     if (record.entities.length > this.config.maxEntitiesPerQuestion) {
       throw inconsistent(`question '${record.id}' entities exceed configured maximum`)
+    }
+    if (record.observationReviews.length > this.config.maxObservationReviewsPerQuestion) {
+      throw inconsistent(`question '${record.id}' observation reviews exceed configured maximum`)
     }
     if (record.observations.length > this.config.maxObservationsPerQuestion) {
       throw inconsistent(`question '${record.id}' observations exceed configured maximum`)
@@ -1869,6 +2196,7 @@ export class ResearchInformation extends Service {
       }
       seenClaims.add(claim.id)
     }
+    this.validateStoredReviews(record)
     const seenSyntheses = new Set<ResearchSynthesisId>()
     const supersededSyntheses = new Set<ResearchSynthesisId>()
     const claimsById = new Map(record.claims.map(value => [value.id, value]))
@@ -2035,6 +2363,7 @@ export class ResearchInformation extends Service {
       }
       seenObservations.add(observation.id)
     }
+    this.validateStoredObservationReviews(record)
     const seenComparisonProtocols = new Set<ResearchComparisonProtocolId>()
     const supersededComparisonProtocols = new Set<ResearchComparisonProtocolId>()
     for (const protocol of record.comparisonProtocols) {
@@ -2079,6 +2408,13 @@ export class ResearchInformation extends Service {
           supersedingClaimsById,
           supersedingEntitiesById,
         )
+        const history = { ...record,
+          claimReviews: record.claimReviews.filter(review => Date.parse(review.createdAt) < protocolTimestamp),
+          observationReviews: record.observationReviews.filter(review => Date.parse(review.createdAt) < protocolTimestamp) }
+        if (getResearchObservationReview(history, observation.id)?.decision === 'rejected'
+          || observationRejectedClaim(history, observation) !== undefined) {
+          throw inconsistent(`comparison protocol '${protocol.id}' references a previously rejected observation or claim`)
+        }
         observations.push(observation)
         paperIds.add(observationPaperId(record, observation))
       }
@@ -2571,6 +2907,32 @@ function isActiveReadingNote(
 
 function isActiveEntity(record: ResearchQuestionRecord, entityId: ResearchEntityId): boolean {
   return !record.entities.some(value => value.supersedes.includes(entityId))
+}
+
+/**
+ * Project current source validity and the latest researcher assessment of one observation.
+ * @param record - complete question containing the observation and its immutable review history.
+ * @param observation - one observation from that question.
+ * @returns structural currency, latest decision, and rejected supporting claims; none implies scientific truth.
+ */
+export function researchObservationState(record: ResearchQuestionRecord, observation: ResearchObservation): ResearchObservationState {
+  return { active: isActiveObservation(record, observation.id), stale: isObservationStale(record, observation),
+    review: getResearchObservationReview(record, observation.id) ?? null,
+    rejectedClaimIds: rejectedObservationClaims(record, observation) }
+}
+
+function getResearchObservationReview(record: ResearchQuestionRecord, id: ResearchObservationId): ResearchObservationReview | undefined {
+  return record.observationReviews.findLast(review => review.observationId === id
+    || (review.decision === 'revised' && review.replacementObservationId === id))
+}
+
+function rejectedObservationClaims(record: ResearchQuestionRecord, observation: ResearchObservation): readonly ResearchClaimId[] {
+  return [...new Set(observationClaimIds(observation))].filter(id => record.claimReviews.findLast(review =>
+    review.claimId === id || (review.decision === 'revised' && review.replacementClaimId === id))?.decision === 'rejected')
+}
+
+function observationRejectedClaim(record: ResearchQuestionRecord, observation: ResearchObservation): ResearchClaimId | undefined {
+  return rejectedObservationClaims(record, observation)[0]
 }
 
 function isActiveObservation(record: ResearchQuestionRecord, observationId: ResearchObservationId): boolean {

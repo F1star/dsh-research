@@ -1,0 +1,10 @@
+docling-slim[standard,feat-ocr-rapidocr-onnx]==2.126.0
+docling-core==2.95.0
+docling-ibm-models==4.0.2
+accelerate==1.14.0
+onnxruntime==1.29.0
+peft==0.20.0
+rapidocr==3.9.2
+torch==2.14.0
+torchvision==0.29.0
+transformers==5.8.1

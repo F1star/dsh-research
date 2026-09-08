@@ -1,6 +1,6 @@
 /**
  * Package-owned invariant registration for the research-document runtime.
- * @module @f1star/dsh-research/research-document/invariant
+ * @module @deepseek-ai/dsh-research-document/invariant
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Cordis companion plugin name. */

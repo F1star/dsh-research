@@ -1,7 +1,7 @@
 /**
  * Model-facing tools for registering, finding, and explicitly reconciling
  * durable research-paper identities through `ctx.researchLibrary`.
- * @module @f1star/dsh-research/tool-research-library
+ * @module @deepseek-ai/dsh-tool-research-library
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -81,7 +81,7 @@ const EXTRACTION_SCHEMA = {
       type: 'object',
       additionalProperties: false,
       properties: {
-        text: { type: 'string', required: true, const: 'native' },
+        text: { type: 'string', required: true, enum: ['native', 'ocr-assisted'] },
         layout: { type: 'string', required: true, const: 'approximate' },
       },
     },

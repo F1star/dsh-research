@@ -1,0 +1,64 @@
+{
+  "sourceSha256": "42b96084d8dce29db2710d50aa58bae55849b1385b401bc766a6c2b3d4d54671",
+  "table": {
+    "headers": [
+      "Method",
+      "Split",
+      "Accuracy (%)",
+      "SD"
+    ],
+    "rows": [
+      [
+        "Baseline A",
+        "Test",
+        "80.0",
+        "1.2"
+      ],
+      [
+        "Method B",
+        "Test",
+        "85.5",
+        "0.8"
+      ]
+    ],
+    "footnote": "SD is measured across runs, not a confidence interval."
+  },
+  "chart": {
+    "type": "line_chart",
+    "xAxis": {
+      "label": "Training epochs",
+      "values": [
+        1,
+        2,
+        3
+      ]
+    },
+    "yAxis": {
+      "label": "Accuracy",
+      "unit": "%"
+    },
+    "series": [
+      {
+        "label": "Baseline A",
+        "values": [
+          70,
+          75,
+          80
+        ]
+      },
+      {
+        "label": "Method B",
+        "values": [
+          72,
+          80,
+          85.5
+        ]
+      }
+    ],
+    "uncertainty": "not depicted"
+  },
+  "formula": {
+    "latex": "A = \\frac{100}{N}\\sum_{i=1}^{N}\\mathbf{1}(\\hat{y}_i=y_i)",
+    "context": "N is the number of test examples; y is the reference label."
+  }
+}

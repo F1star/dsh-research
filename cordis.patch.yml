@@ -2,6 +2,9 @@
 # started through this DSH profile. Installing into a profile is therefore the
 # explicit grant; remove this bundle to withdraw the capability.
 - insert:
+    - id: f1star-research
+      name: '@f1star/dsh-research'
+
     - id: f1star-research-document
       name: '@f1star/dsh-research/research-document'
       config:
@@ -10,11 +13,35 @@
     - id: f1star-research-document-pdfjs
       name: '@f1star/dsh-research/research-document-pdfjs'
 
+    - id: f1star-research-document-storage
+      name: '@f1star/dsh-research/research-document-storage'
+
     - id: f1star-research-library
       name: '@f1star/dsh-research/research-library'
 
     - id: f1star-research-information
       name: '@f1star/dsh-research/research-information'
+
+    - id: f1star-research-report
+      name: '@f1star/dsh-research/research-report'
+
+    - id: f1star-research-task
+      name: '@f1star/dsh-research/research-task'
+
+    - id: f1star-research-workspace
+      name: '@f1star/dsh-research/research-workspace'
+
+    - id: f1star-research-task-runner
+      name: '@f1star/dsh-research/research-task-runner'
+      config:
+        agentPreset: minimal
+        maxSteps: 64
+        maxDurationMs: 1200000
+        maxUnchangedTurns: 2
+        maxConcurrentRuns: 2
+        maxRuns: 1000
+        maxTextChars: 10000
+        maxRunBytes: 32768
 
     - id: f1star-tool-research-document
       name: '@f1star/dsh-research/tool-research-document'
@@ -24,3 +51,6 @@
 
     - id: f1star-tool-research-information
       name: '@f1star/dsh-research/tool-research-information'
+
+    - id: f1star-tool-research-task
+      name: '@f1star/dsh-research/tool-research-task'

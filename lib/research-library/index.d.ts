@@ -1,7 +1,7 @@
 /**
  * Profile-local durable research-paper library: explicit work identities,
  * exact imported source versions, and historical parser observations.
- * @module @f1star/dsh-research/research-library
+ * @module @deepseek-ai/dsh-research-library
  */
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';

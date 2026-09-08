@@ -1,0 +1,4 @@
+# PDF fixtures retain exact bytes, including byte-offset-sensitive whitespace.
+*.pdf binary
+# Third-party code in this generated bundle contains whitespace inside string literals.
+lib/client.js whitespace=-blank-at-eol

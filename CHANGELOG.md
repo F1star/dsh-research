@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## 0.4.0 - 2026-09-08
+
+- Add durable original-PDF and parser-revision archives, page geometry, and `paper_structure` for bounded table, formula, and chart extraction inspection. PDF.js remains the default; the optional Docling provider ships a Python worker and requires a separately configured Python environment. Generated extraction remains unverified until checked against the source.
+- Add a Research sidebar workspace for the paper library, archived PDF reading, saved positions, notes, evidence matrices, human claim/result reviews, report downloads, and recoverable task checkpoints. A browser bridge registers the plugin's own typed Remote namespace with the published DSH host.
+- Add human review decisions with revision checks and history. Add deterministic Markdown, LaTeX, BibTeX, CSL-JSON, and provenance exports; readiness warnings do not constitute publication approval.
+- Add three durable research workflows and an opt-in, bounded task execution service with owned logged sessions, stop handling, source-change invalidation, and human-review stops. Execution start/stop/history is available through the trusted workspace API; dedicated browser execution controls are not included yet. The default execution preset is the installed host's `minimal` preset with the profile's research tools.
+- Retain the 0.3 reading pack, digest-paged review renderer, and synthesis comparison-protocol provenance.
+- **Storage compatibility:** the paper-library domain is now version 2 and the research-information domain is version 7, combining human review records with the standalone 0.3 comparison fields. There is no automatic migration from library version 1 or information version 5 (nor from the source application's information version 6). Back up profile storage before updating and use separate fresh storage for 0.4. Unsupported versions are refused without rewriting them; pin `v0.3.0` to reopen unchanged 0.3 data.
+- DOI/URL/Zotero ingestion, semantic library search, complete scientific-accuracy evaluation, and publication approval remain outside this release.
+
 ## 0.3.0 - 2026-09-04
 
 - Add a required `comparisonProtocolIds` array to every durable synthesis finding and expose an optional `comparison_protocol_ids` input through `research_synthesis_write`, with omission recorded as an empty array. Source summaries cannot link a protocol; linked findings must be inferences, may reference only active, non-stale comparison protocols, and must cite every result claim used by each linked protocol. Raise the default claim-reference limit per finding from 64 to 256 so one protocol at its default observation limit remains usable.

@@ -1,6 +1,6 @@
 /**
  * Durable schema and storage-domain declaration for research information.
- * @module @f1star/dsh-research/research-information/src/spec
+ * @module @deepseek-ai/dsh-research-information/src/spec
  */
 
 import { z } from 'zod'
@@ -21,6 +21,10 @@ import type {
   ResearchClaim,
   ResearchClaimEvidenceLink,
   ResearchClaimId,
+  ResearchClaimReview,
+  ResearchClaimReviewId,
+  ResearchObservationReview,
+  ResearchObservationReviewId,
   ResearchComparisonProtocol,
   ResearchComparisonProtocolId,
   ResearchDecimal,
@@ -56,6 +60,7 @@ const authorId = z.string().transform(value => value as ResearchAuthorId)
 const questionId = z.string().transform(value => value as ResearchQuestionId)
 const evidenceId = z.string().transform(value => value as ResearchEvidenceId)
 const claimId = z.string().transform(value => value as ResearchClaimId)
+const claimReviewId = z.string().transform(value => value as ResearchClaimReviewId)
 const synthesisId = z.string().transform(value => value as ResearchSynthesisId)
 const findingId = z.string().transform(value => value as ResearchFindingId)
 const readingNoteId = z.string().transform(value => value as ResearchReadingNoteId)
@@ -263,6 +268,29 @@ const comparisonProtocol: z.ZodType<ResearchComparisonProtocol> = z.object({
   createdAt: instant,
 })
 
+const reviewFields = {
+
+  evidenceSupport: z.enum(['supports', 'partial', 'unsupported', 'uncertain']),
+  rationale: z.string(),
+  qualifications: z.string().optional(),
+  counterEvidenceIds: z.array(evidenceId),
+  questionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  createdBy: z.object({ kind: z.literal('researcher'), id: authorId }),
+  createdAt: instant,
+}
+
+const claimReview: z.ZodType<ResearchClaimReview> = z.discriminatedUnion('decision', [
+  z.strictObject({ ...reviewFields, id: claimReviewId, claimId, decision: z.enum(['accepted', 'rejected']) }),
+  z.strictObject({ ...reviewFields, id: claimReviewId, claimId, decision: z.literal('revised'), replacementClaimId: claimId }),
+])
+
+const observationReviewId = z.string().transform(value => value as ResearchObservationReviewId)
+const observationReview: z.ZodType<ResearchObservationReview> = z.discriminatedUnion('decision', [
+  z.strictObject({ ...reviewFields, id: observationReviewId, observationId, decision: z.enum(['accepted', 'rejected']) }),
+  z.strictObject({ ...reviewFields, id: observationReviewId, observationId,
+    decision: z.literal('revised'), replacementObservationId: observationId }),
+])
+
 /** Durable schema for one research-question aggregate. */
 export const researchQuestionRecord: z.ZodType<ResearchQuestionRecord> = z.object({
   id: questionId,
@@ -273,6 +301,8 @@ export const researchQuestionRecord: z.ZodType<ResearchQuestionRecord> = z.objec
   updatedBy: authorship,
   evidence: z.array(evidence),
   claims: z.array(claim),
+  claimReviews: z.array(claimReview),
+  observationReviews: z.array(observationReview),
   syntheses: z.array(synthesis),
   readingNotes: z.array(readingNote),
   entities: z.array(entity),
@@ -282,10 +312,10 @@ export const researchQuestionRecord: z.ZodType<ResearchQuestionRecord> = z.objec
   updatedAt: instant,
 })
 
-/** Version-five aggregate store whose synthesis findings explicitly retain comparison protocols. */
+/** Version-seven store retaining researcher decisions and synthesis comparison provenance. */
 export const researchInformationDomainSpec = defineDomain({
   name: 'research_information',
-  version: 5,
+  version: 7,
   tables: {
     questions: domainTable<ResearchQuestionId, ResearchQuestionRecord>(researchQuestionRecord),
   },

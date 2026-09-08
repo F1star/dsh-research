@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import ResearchDocumentRuntime, {
+  researchDocumentParseResultSchema,
   type ResearchDocumentParseResult,
   type ResearchDocumentParser,
 } from '../../src/research-document/index.ts'
@@ -229,6 +231,7 @@ async function mount(options: {
 } = {}): Promise<{
   ctx: Context
   fs: FakeFs
+  toolFiber: Awaited<ReturnType<Context['plugin']>>
   call(name: string, args: unknown, cwd?: string): Promise<ToolExecutionResult>
 }> {
   const ctx = new Context()
@@ -237,11 +240,11 @@ async function mount(options: {
   await ctx.plugin(ResearchDocumentRuntime, {})
   await ctx.plugin(FakeFs)
   ctx.researchDocuments.registerParser(parser(options.result))
-  if (options.config === undefined) await ctx.plugin(PaperTools)
-  else await ctx.plugin(PaperTools, options.config)
+  const toolFiber = await ctx.plugin(PaperTools, options.config ?? {})
   return {
     ctx,
     fs: ctx.fs as FakeFs,
+    toolFiber,
     call: (name, args, cwd) => ctx.tools.execute({
       signal,
       callId: CallId(`paper-call-${++callCounter}`),
@@ -268,7 +271,29 @@ async function importPaper(setup: Awaited<ReturnType<typeof mount>>): Promise<st
 }
 
 describe('paper tool composition and import', () => {
-  it('registers the bounded five-tool workflow and native-text/OCR guidance', async () => {
+  it('renders unreviewed structures and refuses an oversized complete result without dropping cells', async () => {
+    const result = researchDocumentParseResultSchema.parse(JSON.parse(readFileSync(new URL(
+      '../fixtures/research-document/docling/extraction.json', import.meta.url,
+    ), 'utf8')) as unknown)
+    for (const maxStructureOutputBytes of [262144, 10]) {
+      const setup = await mount({ result, config: { maxStructureOutputBytes } })
+      try {
+        const document = await setup.ctx.researchDocuments.import({ bytes: setup.fs.bytes, mediaType: 'application/pdf' })
+        const table = document.pages[0]!.blocks.find(block => block.structure?.kind === 'table')!
+        const read = await setup.call('paper_read', { document_id: document.id, block_id: table.id, before: 0, after: 0 })
+        if (maxStructureOutputBytes === 10) {
+          expect(read.isError).toBe(true)
+          expect(text(read)).toContain('maxStructureOutputBytes')
+        } else {
+          expect(read.isError).toBe(false)
+          expect(text(read)).toContain('Unreviewed scientific extraction')
+          expect(text(read)).toContain('85.5')
+        }
+      } finally { await setup.ctx.fiber.dispose() }
+    }
+  })
+
+  it('registers the bounded paper-reading workflow and native-text/OCR guidance', async () => {
     const { ctx } = await mount()
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'paper_import',
@@ -276,6 +301,7 @@ describe('paper tool composition and import', () => {
       'paper_search',
       'paper_read',
       'paper_reading_pack',
+      'paper_structure',
     ])
     const prompt = renderPrompt(await ctx.systemPrompt.assemble())
     expect(prompt).toContain('paper_import')
@@ -832,5 +858,155 @@ describe('paper tool config', () => {
     expect(() => {
       PaperTools.apply(ctx, { maxReadingPackSections: 8 })
     }).toThrow('maxReadingPackSections')
+  })
+})
+
+
+describe('scientific structure navigation', () => {
+  const fixture = () => researchDocumentParseResultSchema.parse(JSON.parse(readFileSync(new URL(
+    '../fixtures/research-document/docling/extraction.json', import.meta.url,
+  ), 'utf8')) as unknown)
+
+  it('discovers scientific objects and reconstructs cell pages without changing recognized values', async () => {
+    const setup = await mount({ result: fixture(), config: { maxStructureItems: 3 } })
+    try {
+      const id = await importPaper(setup)
+      const listing = value(await setup.call('paper_structure', { document_id: id }))
+      const entries = listing.items as { kind: string; locator: { block_id: string } }[]
+      expect(entries.map(item => item.kind)).toEqual(['table', 'figure', 'formula'])
+      const pin = { parser_id: listing.parser_id, parser_version: listing.parser_version }
+      const tableId = entries[0]!.locator.block_id
+      const cells: { index: number; text: string; row_span: number; column_header: boolean }[] = []
+      let offset: number | undefined = 0
+      while (offset !== undefined) {
+        const result = value(await setup.call('paper_structure', { document_id: id, block_id: tableId, ...pin, offset }))
+        expect(result).toMatchObject({ view: 'read', kind: 'table', rows: 3, columns: 4, total_items: 12, review_status: 'unreviewed' })
+        cells.push(...result.cells as typeof cells)
+        offset = result.next_offset as number | undefined
+      }
+      expect(cells.map(cell => cell.index)).toEqual(Array.from({ length: 12 }, (_, index) => index))
+      expect(cells.map(cell => cell.text)).toEqual(['Method', 'Split', 'Accuracy (%)', 'SD', 'Baseline A', 'Test', '80.0', '1.2', 'Method B', 'Test', '85.5', '0.8'])
+      expect(cells[0]).toMatchObject({ row_span: 1, column_header: true })
+      const formula = value(await setup.call('paper_structure', {
+        document_id: id, block_id: entries[2]!.locator.block_id, field: 'latex', ...pin,
+      }))
+      expect(formula.text).toBe(fixture().pages[0]!.blocks.flatMap(block => block.structure?.kind === 'formula' ? [block.structure.latex] : [])[0])
+      const filtered = value(await setup.call('paper_structure', { document_id: id, kind: 'figure' }))
+      expect(filtered.total_items).toBe(1)
+      expect(filtered.items).toEqual([entries[1]])
+      expect((await setup.call('paper_structure', { document_id: id, ...pin, offset: 3 })).isError).toBe(false)
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('pages empty-text objects and long Unicode cells and captions within the complete byte limit', async () => {
+    const sourceText = '测量😀é'.repeat(900)
+    const result: ResearchDocumentParseResult = {
+      ...parsed(), pages: [{ ...parsed().pages[0]!, blocks: [{
+        kind: 'paragraph', text: '', bbox: { x: 0, y: 0, width: 1, height: 1 },
+        structure: { kind: 'table', captions: [sourceText], footnotes: [], data: { rows: 1, columns: 1, cells: [{
+          row: 0, column: 0, rowSpan: 1, columnSpan: 1, text: sourceText, columnHeader: false, rowHeader: false,
+        }] } },
+      }] }],
+    }
+    const setup = await mount({ result, config: { maxStructureOutputBytes: 6000 } })
+    try {
+      const id = await importPaper(setup)
+      const listing = value(await setup.call('paper_structure', { document_id: id }))
+      const pin = { parser_id: listing.parser_id, parser_version: listing.parser_version }
+      const blockId = (listing.items as { locator: { block_id: string } }[])[0]!.locator.block_id
+      const initial = value(await setup.call('paper_structure', { document_id: id, block_id: blockId }))
+      const cell = (initial.cells as { text: string; next_text_offset: number; total_text_chars: number }[])[0]!
+      expect(cell.total_text_chars).toBe(Array.from(sourceText).length)
+      expect(cell.next_text_offset).toBeLessThan(2000)
+      for (const field of ['cell', 'caption']) {
+        let offset: number | undefined = field === 'cell' ? cell.next_text_offset : 0
+        let reconstructed = field === 'cell' ? cell.text : ''
+        while (offset !== undefined) {
+          const response = await setup.call('paper_structure', {
+            document_id: id, block_id: blockId, ...pin, field, field_index: 0, text_offset: offset,
+          })
+          const current = value(response)
+          const emitted = { value: response.value, content: response.content, meta: response.meta }
+          expect(Buffer.byteLength(JSON.stringify(emitted))).toBeLessThanOrEqual(6000)
+          expect(current.text_offset).toBe(offset)
+          reconstructed += current.text as string
+          const next = current.next_text_offset as number | undefined
+          if (next !== undefined) expect(next).toBeGreaterThan(offset)
+          offset = next
+        }
+        expect(reconstructed).toBe(sourceText)
+      }
+      const empty = value(await setup.call('paper_structure', { document_id: id, block_id: blockId, field: 'text' }))
+      expect(empty).toMatchObject({ text: '', total_text_chars: 0 })
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('preserves unavailable fields and enforces the exact minimum complete-result budget', async () => {
+    const setup = await mount({ result: fixture() })
+    try {
+      const id = await importPaper(setup)
+      const listing = value(await setup.call('paper_structure', { document_id: id, kind: 'figure' }))
+      const blockId = (listing.items as { locator: { block_id: string } }[])[0]!.locator.block_id
+      const args = { document_id: id, block_id: blockId, field: 'description' }
+      const initial = await setup.call('paper_structure', args)
+      expect(value(initial)).toMatchObject({ text: null, total_text_chars: 0, text_offset: 0 })
+      const bytes = Buffer.byteLength(JSON.stringify({ value: initial.value, content: initial.content, meta: initial.meta }))
+      await setup.toolFiber.dispose()
+      const exact = await setup.ctx.plugin(PaperTools, { maxStructureOutputBytes: bytes })
+      expect(value(await setup.call('paper_structure', args))).toEqual(initial.value)
+      await exact.dispose()
+      await setup.ctx.plugin(PaperTools, { maxStructureOutputBytes: bytes - 1 })
+      expect(text(await setup.call('paper_structure', args))).toContain('maxStructureOutputBytes')
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('continues the selected archived revision after another reader changes the cached revision', async () => {
+    const original = fixture()
+    const setup = await mount({ result: original })
+    try {
+      const document = await setup.ctx.researchDocuments.import({ bytes: setup.fs.bytes, mediaType: 'application/pdf' })
+      const snapshots = [original, { ...original, parserVersion: 'new-extraction' }].map(parsed => ({
+        documentId: document.id, bytes: setup.fs.bytes, mediaType: document.mediaType, parserId: 'fixture', parsed,
+      }))
+      setup.ctx.researchDocuments.registerArchive({
+        save: async () => { throw new Error('read-only archive fixture') },
+        load: async (id, parser) => snapshots.find(snapshot => snapshot.documentId === id
+          && parser?.id === snapshot.parserId && parser.version === snapshot.parsed.parserVersion),
+      })
+      const originalBlocks = setup.ctx.researchDocuments.structures(document)
+      await setup.ctx.researchDocuments.restore(document.id, { id: 'fixture', version: 'new-extraction' })
+      expect(setup.ctx.researchDocuments.peek(document.id)?.parser.version).toBe('new-extraction')
+      const result = value(await setup.call('paper_structure', {
+        document_id: document.id, parser_id: 'fixture', parser_version: original.parserVersion, offset: 1,
+      }))
+      expect(result.parser_version).toBe(original.parserVersion)
+      expect((result.items as { locator: { block_id: string } }[]).map(item => item.locator.block_id))
+        .toEqual(originalBlocks.slice(1).map(block => block.id))
+    } finally { await setup.ctx.fiber.dispose() }
+  })
+
+  it('rejects mixed cursors, stale revisions, invalid indices and limits, and unregisters on disposal', async () => {
+    const setup = await mount({ result: fixture() })
+    try {
+      const id = await importPaper(setup)
+      const listing = value(await setup.call('paper_structure', { document_id: id }))
+      const blockId = (listing.items as { locator: { block_id: string } }[])[0]!.locator.block_id
+      const pin = { parser_id: listing.parser_id, parser_version: listing.parser_version }
+      const invalid = [
+        { offset: 1 }, { parser_id: 'fixture' }, { ...pin, parser_version: 'missing' },
+        { ...pin, offset: 99 }, { max_items: 0 }, { max_items: 101 }, { offset: -1 },
+        { field: 'text' }, { block_id: blockId, kind: 'table' },
+        { block_id: blockId, field_index: 0 }, { block_id: blockId, text_offset: 0 },
+        { block_id: blockId, field: 'cell' }, { block_id: blockId, field: 'text', field_index: 0 },
+        { block_id: blockId, field: 'cell', field_index: -1 }, { block_id: blockId, field: 'cell', field_index: 99 },
+        { block_id: blockId, field: 'latex' }, { block_id: blockId, field: 'text', offset: 0 },
+        { block_id: blockId, field: 'text', ...pin, text_offset: 99999 }, { block_id: 'invalid' },
+      ]
+      for (const args of invalid) expect((await setup.call('paper_structure', { document_id: id, ...args })).isError, JSON.stringify(args)).toBe(true)
+      await setup.toolFiber.dispose()
+      expect(setup.ctx.tools.get('paper_structure')).toBeUndefined()
+      await setup.ctx.plugin(PaperTools, { maxStructureOutputBytes: 1 })
+      expect(text(await setup.call('paper_structure', { document_id: id }))).toContain('maxStructureOutputBytes')
+    } finally { await setup.ctx.fiber.dispose() }
   })
 })
