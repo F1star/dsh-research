@@ -2,6 +2,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
+First time here? Start with [prerequisites](#prerequisites) and [install and run](#install-and-run). No global `dsh` command is required.
+
 `@f1star/dsh-research` is an installable [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle for evidence-first paper work. It is a DSH bundle plugin, not a Codex plugin, and runs inside an existing DSH profile.
 
 Version 0.4 adds an archived-PDF research workspace, optional OCR, human review, cited report exports, and recoverable research tasks. It preserves exact source anchors and keeps quoted evidence distinct from authored notes, inferences, normalizations, comparison decisions, and syntheses.
@@ -23,30 +25,81 @@ This standalone bundle mounts both the research services and their model-facing 
 
 ## Prerequisites
 
-- A compatible `dsh` installation with `pnpm` available on `PATH`.
-- A target profile containing `@deepseek-ai/dsh-base` followed by `@deepseek-ai/dsh-web-app`. The shipped `web` profile has this composition.
-- Model credentials available through the normal DSH credential sources.
-- Local PDFs readable under the session's filesystem permissions. Relative file paths resolve from the session workspace.
+Use Node.js 24 LTS (including npm and npx). The supported Node range is `^22.19.0 || >=24.0.0`. Check your terminal:
+
+```sh
+node --version
+npm --version
+pnpm --version
+```
+
+If `node` or `npm` is missing, install Node.js 24 LTS and reopen the terminal. If only `pnpm` is missing, install it and check again:
+
+```sh
+npm install --global pnpm@11.7.0
+pnpm --version
+```
+
+DSH uses pnpm to install profile plugins, even when you launch DSH with npx. Python is not needed for the default PDF reader; only optional [OCR](docs/ocr.md) needs it.
 
 ## Install and run
 
-Install the bundle into the shipped Web profile:
+### 1. Select separate storage for 0.4
+
+These commands are for macOS/Linux shells, including zsh. You do not need to clone this repository or install a global `dsh` command. Run them in the same terminal.
 
 ```sh
-dsh plugin --profile web add https://github.com/F1star/dsh-research/releases/download/v0.4.0/dsh-research.tgz
-dsh --profile web --dump-config
-dsh web
+export DSH_HOME="$HOME/.dsh-research-v040"
 ```
 
-The install command initializes the shipped `web` profile when it does not exist. The configuration dump lets you confirm that the `@f1star/dsh-research` layer and its research rows are present before booting the profile.
+On first setup, choose a directory that does not contain older DSH data. DSH creates it as needed. This example isolates configuration, credentials, and default storage from your existing DSH installation; it does not migrate or delete old data. A different profile name alone does not guarantee separate storage. Keep using the same `DSH_HOME` to return to your 0.4 records.
 
-A GitHub install follows the selected Git ref. After a tag or commit you trust is available, pin it for reproducible installation:
+### 2. Install the released plugin
+
+Use the host version tested for this release. If npx asks to install the host package, answer `y`. The host's `0.1.1-rc.2` version and this plugin's `0.4.0` version are separate.
 
 ```sh
-dsh plugin --profile web add github:F1star/dsh-research#<tag-or-commit>
+npx @deepseek-ai/dsh@0.1.1-rc.2 --version
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add https://github.com/F1star/dsh-research/releases/download/v0.4.0/dsh-research.tgz
+npx @deepseek-ai/dsh@0.1.1-rc.2 --profile web --dump-config
 ```
 
-Restart a running profile after adding, updating, or removing the bundle.
+Copy commands from the code block. The download argument is a plain URL, not `[URL](URL)`. The install creates a Web profile with the base and Web bundles; the configuration dump should include `@f1star/dsh-research` and its research rows. A successful dump confirms composition, not a running Web server.
+
+### 3. Start the research workspace
+
+```sh
+npx @deepseek-ai/dsh@0.1.1-rc.2 web
+```
+
+Keep that terminal running and open the local URL it prints. In the browser, configure your model API key, select a workspace containing your PDFs, and open **科研工作区** in the sidebar. You may defer the key to inspect the interface, but model-assisted reading needs valid model credentials. For your first paper, ask in the conversation: “Import `papers/one.pdf`, register it in the paper library, and prepare an evidence-anchored reading pack.” Replace that example with a real readable PDF path; relative paths resolve from the session workspace. The paper will appear in the library after registration.
+
+Stop the server with `Ctrl+C`. In a new terminal, start it again with both lines:
+
+```sh
+export DSH_HOME="$HOME/.dsh-research-v040"
+npx @deepseek-ai/dsh@0.1.1-rc.2 web
+```
+
+### Optional: install a global dsh command
+
+The steps above already work without it. If you prefer the shorter `dsh` command:
+
+```sh
+npm install --global @deepseek-ai/dsh@0.1.1-rc.2
+dsh --version
+```
+
+After confirming the command works, `dsh` can replace `npx @deepseek-ai/dsh@0.1.1-rc.2` in the examples. Continue to set the same `DSH_HOME`. If your terminal still cannot find `dsh`, use the npx route and check the global npm executable directory in your PATH.
+
+## Troubleshooting and source checkouts
+
+- `zsh: command not found: dsh`: the shell cannot find a global CLI; entering a cloned repository does not install one. Use the npx commands above.
+- `command not found: pnpm`: install pnpm as shown in prerequisites, then retry in a terminal where `pnpm --version` succeeds.
+- No research sidebar: check the selected `DSH_HOME`, inspect `--profile web --dump-config` for the plugin rows, then restart the Web server after installation.
+- Records appear missing: verify that you reused the same `DSH_HOME`. Do not delete storage or reinstall into an old home to suppress a version mismatch.
+- This repository, `dsh-research`, contains the independent plugin, not the DSH launcher. `pnpm install` and `pnpm run build` here build the plugin; this repository has no `pnpm dsh` script.
+- In the separate, enhanced Research Harness application source checkout, run `pnpm install`, `pnpm run build`, then `pnpm dsh --profile research` from its root. That uses its built-in research bundle, not this standalone 0.4 release. Do not install both research bundles into the same profile; their storage formats are not interchangeable. An unmodified upstream checkout may not contain the research preset.
 
 ## Recommended workflow
 
@@ -95,9 +148,13 @@ See [architecture](docs/architecture.md) for package roles, generated browser de
 
 ## Update or remove
 
+The quickstart pins a release-tarball URL. To change versions, read the target release's storage-compatibility notes, back up your data, and repeat `plugin --profile web add` with that release's exact tarball URL; a generic `update` does not select a new pinned URL for you. Restart after changing the installed plugin. Do not mix standalone storage with the source application's storage.
+
+To remove the plugin from the isolated home used above, stop the Web server first, then run:
+
 ```sh
-dsh plugin --profile web update @f1star/dsh-research
-dsh plugin --profile web remove @f1star/dsh-research
+export DSH_HOME="$HOME/.dsh-research-v040"
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web remove @f1star/dsh-research
 ```
 
 Removing the bundle stops mounting its services and tools. It does not delete source PDFs, and research records can remain in the profile's storage; manage that storage separately if you need archival or deletion.

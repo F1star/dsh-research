@@ -2,6 +2,8 @@
 
 [English](README.md) | 简体中文
 
+首次使用请从[前置条件](#前置条件)和[安装与运行](#安装与运行)开始，无需预先安装全局 `dsh` 命令。
+
 `@f1star/dsh-research` 是面向证据优先论文工作的可安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle。它是 DSH bundle 插件，不是 Codex 插件，需要在现有 DSH profile 内运行。
 
 0.4 版提供原始 PDF 归档、科研工作台、可选 OCR、人工审阅、带引用的报告导出和可恢复科研任务。它保留精确来源锚点，并明确区分引文证据与作者撰写的笔记、推断、归一化、比较决策和综合结论。
@@ -20,30 +22,81 @@
 
 ## 前置条件
 
-- 已安装兼容版本的 `dsh`，并且 `pnpm` 可从 `PATH` 调用。
-- 目标 profile 依次包含 `@deepseek-ai/dsh-base` 和 `@deepseek-ai/dsh-web-app`。随发行版提供的 `web` profile 已采用这一组合。
-- 可通过 DSH 的常规凭据来源读取模型凭据。
-- 会话的文件系统权限允许读取本地 PDF。相对文件路径从会话 workspace 解析。
+使用 Node.js 24 LTS（包含 npm 和 npx）。支持的 Node 范围为 `^22.19.0 || >=24.0.0`。先在终端检查：
+
+```sh
+node --version
+npm --version
+pnpm --version
+```
+
+如果找不到 `node` 或 `npm`，请先安装 Node.js 24 LTS，再重新打开终端。如果只是缺少 `pnpm`，执行：
+
+```sh
+npm install --global pnpm@11.7.0
+pnpm --version
+```
+
+即使通过 npx 启动，DSH 也需要调用 pnpm 安装 profile 插件。默认 PDF 阅读不需要 Python；只有可选的 [OCR](docs/ocr.md) 需要独立 Python 环境。
 
 ## 安装与运行
 
-将 bundle 安装到随发行版提供的 Web profile：
+### 1. 为 0.4 选择独立存储
+
+以下命令适用于 macOS/Linux 终端，包括 zsh。无需克隆本仓库，也无需预先全局安装 `dsh`。请在同一个终端中依次执行。
 
 ```sh
-dsh plugin --profile web add https://github.com/F1star/dsh-research/releases/download/v0.4.0/dsh-research.tgz
-dsh --profile web --dump-config
-dsh web
+export DSH_HOME="$HOME/.dsh-research-v040"
 ```
 
-如果随发行版提供的 `web` profile 尚不存在，安装命令会初始化它。启动前可通过配置转储确认 `@f1star/dsh-research` 层及其科研行已经出现。
+首次配置时，请选择不含旧版 DSH 数据的目录，DSH 会按需创建它。这里将配置、凭据与默认存储隔离到新目录，不迁移也不删除旧数据。仅换一个 profile 名称不一定能隔离存储。以后继续使用同一个 `DSH_HOME`，才能打开本次保存的 0.4 数据。
 
-GitHub 安装会跟随所选 Git ref。当可信的 tag 或 commit 可用后，可固定该版本以获得可复现安装：
+### 2. 安装已发布插件
+
+以下固定使用本次发布验证过的宿主版本。如果 npx 提示安装宿主包，输入 `y`。宿主的 `0.1.1-rc.2` 和科研插件的 `0.4.0` 是两个独立版本号。
 
 ```sh
-dsh plugin --profile web add github:F1star/dsh-research#<tag-or-commit>
+npx @deepseek-ai/dsh@0.1.1-rc.2 --version
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add https://github.com/F1star/dsh-research/releases/download/v0.4.0/dsh-research.tgz
+npx @deepseek-ai/dsh@0.1.1-rc.2 --profile web --dump-config
 ```
 
-添加、更新或移除 bundle 后，请重启正在运行的 profile。
+请复制代码块里的命令。下载参数是纯 URL，不是 `[网址](网址)`。安装会初始化包含 base 和 Web bundle 的 profile；配置输出中应出现 `@f1star/dsh-research` 及其科研行。配置转储成功只表示组合成功，还没有启动网页服务。
+
+### 3. 启动科研工作台
+
+```sh
+npx @deepseek-ai/dsh@0.1.1-rc.2 web
+```
+
+保持终端运行，打开它输出的本地网址。在浏览器中配置模型 API Key，选择包含论文 PDF 的工作区，再点击侧栏的 **科研工作区**。可以选择稍后配置 Key 来浏览界面，但模型辅助阅读需要有效的模型凭据。首次使用可在对话中输入：“导入 `papers/one.pdf`，登记到论文库，并生成带原文证据锚点的导读包。”请替换为真实、可读取的 PDF 路径；相对路径以会话工作区为基准。登记后，论文才会出现在文献列表中。
+
+按 `Ctrl+C` 停止服务。下次新开终端时，两行都要执行：
+
+```sh
+export DSH_HOME="$HOME/.dsh-research-v040"
+npx @deepseek-ai/dsh@0.1.1-rc.2 web
+```
+
+### 可选：安装全局 dsh 命令
+
+上面的流程不需要全局命令。如果希望以后直接输入 `dsh`，可以执行：
+
+```sh
+npm install --global @deepseek-ai/dsh@0.1.1-rc.2
+dsh --version
+```
+
+确认命令可用后，可将示例中的 `npx @deepseek-ai/dsh@0.1.1-rc.2` 换成 `dsh`，但仍需设置相同的 `DSH_HOME`。如果终端依旧找不到 `dsh`，先使用 npx 路线，并检查 PATH 是否包含 npm 的全局可执行文件目录。
+
+## 常见问题与源码运行
+
+- `zsh: command not found: dsh`：终端找不到全局 CLI；进入克隆的仓库不会自动安装该命令。使用上面的 npx 命令即可。
+- `command not found: pnpm`：按前置条件安装 pnpm，确认当前终端能运行 `pnpm --version` 后重试。
+- 没有科研侧栏：检查 `DSH_HOME` 是否正确，通过 `--profile web --dump-config` 确认科研行已加载，并在安装后重启 Web 服务。
+- 原有记录不见了：先确认是否使用了同一个 `DSH_HOME`。不要通过删除存储或向旧目录重新安装来消除版本不匹配错误。
+- 本仓库 `dsh-research` 是独立插件仓库，不是 DSH 启动器。在这里运行 `pnpm install` 和 `pnpm run build` 只会构建插件；本仓库没有 `pnpm dsh` 脚本。
+- 如果使用另一个增强版 Research Harness 应用源码仓库，请在那个仓库的根目录依次运行 `pnpm install`、`pnpm run build`、`pnpm dsh --profile research`。这会使用源码内置科研 bundle，不是独立插件的 0.4 发行版。不要将两套科研 bundle 装入同一 profile；它们的存储格式不能互换。未经改造的上游 checkout 可能没有 research preset。
 
 ## 推荐工作流
 
@@ -93,9 +146,13 @@ bundle 行位于 [`cordis.patch.yml`](cordis.patch.yml)，各插件的默认值�
 
 ## 更新或移除
 
+本教程固定安装 release 压缩包的 URL。更换版本时，请先阅读目标版本的存储兼容说明、备份数据，再使用那个版本的精确压缩包 URL 重新执行 `plugin --profile web add`；普通 `update` 不会替你选择新的固定 URL。更换插件后需重启。不要将独立插件与源码应用的存储混用。
+
+如需从上述独立目录中移除插件，请先停止 Web 服务，再执行：
+
 ```sh
-dsh plugin --profile web update @f1star/dsh-research
-dsh plugin --profile web remove @f1star/dsh-research
+export DSH_HOME="$HOME/.dsh-research-v040"
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web remove @f1star/dsh-research
 ```
 
 移除 bundle 后，其服务和工具不再挂载。此操作不会删除来源 PDF，科研记录也可能继续保留在 profile storage 中；如需归档或删除，请单独管理该 storage。
